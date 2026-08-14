@@ -7,6 +7,7 @@ Kripto, hisse ve emtia alım-satımlarınızı takip eden; **ortalama maliyet** 
 - ✅ Sembol (örn. CHZ), adet ve **USD fiyat** girersiniz
 - ✅ O günkü **USD/TRY kuru** internetten otomatik kaydedilir (elle de girilebilir)
 - ✅ Birden fazla alışın **ortalaması** otomatik hesaplanır
+- ✅ **Komisyon** (borsa işlem ücreti) ana paradan otomatik düşülür
 - ✅ Satışta **gerçekleşen kâr/zarar** hem **dolar** hem **TL** olarak
 - ✅ **Aylık kâr/zarar** raporu
 - ✅ Veriler telefonunuzda saklanır (internet olmadan da açılır)
@@ -53,14 +54,27 @@ mevcut adedini ve gerçekleşen kâr/zararını görürsünüz.
 
 ---
 
+## 💸 Komisyon
+
+Her işlemde **karşı para** (USDT / TL çifti) ve **emir tipi** (piyasa yapıcı /
+piyasa alıcı) seçersiniz; komisyon oranı otomatik gelir (elle de değiştirilebilir).
+Oranları sağ üstteki **⚙︎ Ayarlar**'dan borsanızın kademesine göre düzenleyebilirsiniz.
+
+- **Alışta:** komisyon maliyete eklenir → gerçek birim maliyet `fiyat × (1 + komisyon%)`
+- **Satışta:** komisyon kârdan düşülür → net satış `fiyat × (1 − komisyon%)`
+
+Varsayılan oranlar (örnek borsa): USDT çifti yapıcı %0,01 / alıcı %0,1 —
+TL çifti yapıcı %0,12 / alıcı %0,28.
+
 ## 🔢 Hesaplama Mantığı
 
-- **Ortalama alış (USD):** adet ağırlıklı ortalama
-  `(adet₁·fiyat₁ + adet₂·fiyat₂ + …) / toplam adet`
-- **Ortalama alış (TL):** her alışın `USD fiyat × o günkü kur` değeriyle ağırlıklı ortalama
-- **Satışta gerçekleşen K/Z (USD):** `(satış fiyatı − ortalama maliyet) × adet`
-- **Satışta gerçekleşen K/Z (TL):** `(satış fiyatı × satış kuru − ortalama TL maliyet) × adet`
-  → böylece hem varlık kazancını hem kur farkını içerir
+- **Ortalama maliyet (USD):** komisyon dahil, adet ağırlıklı ortalama
+  `(adet₁·efektif_fiyat₁ + adet₂·efektif_fiyat₂ + …) / toplam adet`
+  (efektif fiyat = `fiyat × (1 + komisyon%)`)
+- **Ortalama maliyet (TL):** her alışın `efektif USD fiyat × o günkü kur` değeriyle ağırlıklı ortalama
+- **Satışta gerçekleşen K/Z (USD):** `(net satış fiyatı − ortalama maliyet) × adet`
+- **Satışta gerçekleşen K/Z (TL):** `(net satış fiyatı × satış kuru − ortalama TL maliyet) × adet`
+  → böylece hem varlık kazancını, hem kur farkını, hem komisyonu içerir
 - **Aylık rapor:** satış işlemlerinin gerçekleştiği aya göre gruplanır
 
 ---

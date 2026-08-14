@@ -45,6 +45,19 @@
   .rate-pill b{color:var(--txt); font-weight:600;}
   .rate-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--green);}
   .rate-pill.stale .dot{background:#d29922;}
+  .gear{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--chip);
+    color:var(--txt);font-size:17px;line-height:1;}
+
+  /* modal */
+  .overlay{position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.6);
+    display:flex; align-items:flex-end; justify-content:center;}
+  .overlay.hidden{display:none;}
+  .sheet{background:var(--bg2); border:1px solid var(--line); border-top-left-radius:20px; border-top-right-radius:20px;
+    width:100%; max-width:640px; padding:18px 16px calc(20px + var(--safe-bottom)); max-height:88vh; overflow:auto;}
+  .sheet h3{margin:0 0 4px; font-size:18px;}
+  .sheet .sub{color:var(--muted); font-size:13px; margin-bottom:8px;}
+  .fee-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .fee-grid .full{grid-column:1 / -1; font-weight:700; margin-top:10px; color:var(--txt); font-size:14px;}
 
   main{padding:14px 14px 20px; max-width:640px; margin:0 auto;}
   h2.section{font-size:15px;margin:6px 2px 12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px;}
@@ -146,7 +159,10 @@
 
 <header>
   <div class="title">Portföy Takip<small id="subtitle">Kripto · Hisse · Emtia</small></div>
-  <div id="ratePill" class="rate-pill stale"><span class="dot"></span><span id="rateText">Kur…</span></div>
+  <div style="display:flex; align-items:center; gap:8px;">
+    <div id="ratePill" class="rate-pill stale"><span class="dot"></span><span id="rateText">Kur…</span></div>
+    <button id="settingsBtn" class="gear" title="Komisyon ayarları">⚙︎</button>
+  </div>
 </header>
 
 <main>
@@ -194,6 +210,27 @@
         </div>
       </div>
 
+      <div class="two">
+        <div>
+          <label>Karşı Para</label>
+          <select id="f-quote">
+            <option value="usdt">USDT çifti</option>
+            <option value="tl">TL çifti</option>
+          </select>
+        </div>
+        <div>
+          <label>Emir Tipi</label>
+          <select id="f-order">
+            <option value="taker">Piyasa alıcı</option>
+            <option value="maker">Piyasa yapıcı</option>
+          </select>
+        </div>
+      </div>
+
+      <label>Komisyon (%) <span class="muted">— karşı para/emir tipine göre otomatik</span></label>
+      <input id="f-fee" type="text" inputmode="decimal" placeholder="0,00" />
+      <div class="hint">Alışta komisyon maliyete eklenir, satışta kârdan düşülür. Oranları ⚙︎ Ayarlar'dan değiştirebilirsiniz.</div>
+
       <label>Tarih</label>
       <input id="f-date" type="date" />
 
@@ -227,14 +264,45 @@
 
 <div id="toast" class="toast"></div>
 
+<!-- Komisyon Ayarları -->
+<div id="settingsOverlay" class="overlay hidden">
+  <div class="sheet">
+    <h3>Komisyon Oranları</h3>
+    <div class="sub">İşlem eklerken karşı para ve emir tipine göre otomatik uygulanır. Borsanızın kademesine göre güncelleyin.</div>
+    <div class="fee-grid">
+      <div class="full">USDT çifti</div>
+      <div><label>Piyasa yapıcı (%)</label><input id="s-usdt-maker" type="text" inputmode="decimal"></div>
+      <div><label>Piyasa alıcı (%)</label><input id="s-usdt-taker" type="text" inputmode="decimal"></div>
+      <div class="full">TL çifti</div>
+      <div><label>Piyasa yapıcı (%)</label><input id="s-tl-maker" type="text" inputmode="decimal"></div>
+      <div><label>Piyasa alıcı (%)</label><input id="s-tl-taker" type="text" inputmode="decimal"></div>
+    </div>
+    <button class="btn" id="s-save">Kaydet</button>
+    <button class="btn ghost" id="s-close" style="margin-top:10px">Kapat</button>
+  </div>
+</div>
+
 <script>
 /* ============ Depolama ============ */
 const LS_TX = "portfoy_tx_v1";
 const LS_RATE = "portfoy_last_rate_v1";
+const LS_FEES = "portfoy_fees_v1";
 const CATS = {kripto:"Kripto", hisse:"Hisse", emtia:"Emtia"};
+const DEFAULT_FEES = {usdt:{maker:0.01, taker:0.1}, tl:{maker:0.12, taker:0.28}};
 
 function loadTx(){ try{ return JSON.parse(localStorage.getItem(LS_TX)) || []; }catch(e){ return []; } }
 function saveTx(list){ localStorage.setItem(LS_TX, JSON.stringify(list)); }
+function loadFees(){
+  try{
+    const f = JSON.parse(localStorage.getItem(LS_FEES));
+    if(!f) return JSON.parse(JSON.stringify(DEFAULT_FEES));
+    return {
+      usdt:{maker: f.usdt?.maker ?? DEFAULT_FEES.usdt.maker, taker: f.usdt?.taker ?? DEFAULT_FEES.usdt.taker},
+      tl:{maker: f.tl?.maker ?? DEFAULT_FEES.tl.maker, taker: f.tl?.taker ?? DEFAULT_FEES.tl.taker}
+    };
+  }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_FEES)); }
+}
+function saveFees(f){ localStorage.setItem(LS_FEES, JSON.stringify(f)); }
 
 /* ============ Yardımcılar ============ */
 function toNum(s){ // basit: hem 12,5 hem 12.5 kabul et
@@ -301,16 +369,20 @@ function analyze(txs){
     const list = groups[k].slice().sort((a,b)=> (a.date+String(a.ts)).localeCompare(b.date+String(b.ts)));
     let qty=0, avgUsd=0, avgTry=0;
     let boughtQty=0, soldQty=0, sellUsdSum=0;
-    let realUsd=0, realTry=0;
+    let realUsd=0, realTry=0, feeUsdTot=0, feeTryTot=0;
     for(const t of list){
-      const p=t.priceUsd, r=t.rate||0, q=t.qty;
+      const p=t.priceUsd, r=t.rate||0, q=t.qty, f=(t.fee||0)/100;
+      const feeUsd=p*q*f, feeTry=feeUsd*r;
+      feeUsdTot+=feeUsd; feeTryTot+=feeTry;
       if(t.side==="AL"){
+        const effU=p*(1+f);            // komisyon dahil birim maliyet (USD)
         const nq=qty+q;
-        if(nq>0){ avgUsd=(avgUsd*qty + p*q)/nq; avgTry=(avgTry*qty + p*r*q)/nq; }
+        if(nq>0){ avgUsd=(avgUsd*qty + effU*q)/nq; avgTry=(avgTry*qty + effU*r*q)/nq; }
         qty=nq; boughtQty+=q;
       }else{
-        const pu=(p-avgUsd)*q; const pt=(p*r-avgTry)*q;
-        realUsd+=pu; realTry+=pt; qty-=q; soldQty+=q; sellUsdSum+=p*q;
+        const effU=p*(1-f);            // komisyon düşülmüş birim satış (USD)
+        const pu=(effU-avgUsd)*q; const pt=(effU*r-avgTry)*q;
+        realUsd+=pu; realTry+=pt; qty-=q; soldQty+=q; sellUsdSum+=effU*q;
         const ym=t.date.slice(0,7);
         const m=monthly[ym]=monthly[ym]||{usd:0,try:0,count:0};
         m.usd+=pu; m.try+=pt; m.count++;
@@ -318,7 +390,7 @@ function analyze(txs){
     }
     const [cat,symbol]=k.split("|");
     holdings.push({cat,symbol,qty,avgUsd,avgTry,boughtQty,soldQty,
-      avgSellUsd: soldQty>0? sellUsdSum/soldQty : 0, realUsd, realTry});
+      avgSellUsd: soldQty>0? sellUsdSum/soldQty : 0, realUsd, realTry, feeUsd:feeUsdTot, feeTry:feeTryTot});
   }
   holdings.sort((a,b)=> a.symbol.localeCompare(b.symbol));
   const months = Object.keys(monthly).sort().reverse().map(ym=>({ym, ...monthly[ym]}));
@@ -346,16 +418,17 @@ function renderPortfoy(){
   const list=document.getElementById("pf-list");
 
   // Toplamlar
-  let openCostUsd=0, openCostTry=0, realUsd=0, realTry=0;
-  hs.forEach(h=>{ if(h.qty>1e-9){ openCostUsd+=h.qty*h.avgUsd; openCostTry+=h.qty*h.avgTry; } realUsd+=h.realUsd; realTry+=h.realTry; });
+  let openCostUsd=0, openCostTry=0, realUsd=0, realTry=0, feeUsd=0, feeTry=0;
+  hs.forEach(h=>{ if(h.qty>1e-9){ openCostUsd+=h.qty*h.avgUsd; openCostTry+=h.qty*h.avgTry; } realUsd+=h.realUsd; realTry+=h.realTry; feeUsd+=h.feeUsd; feeTry+=h.feeTry; });
   document.getElementById("pf-total").innerHTML =
-    '<div class="lbl">Açık Pozisyon Maliyeti</div>'+
+    '<div class="lbl">Açık Pozisyon Maliyeti (komisyon dahil)</div>'+
     '<div class="amt">'+fmtUsd(openCostUsd)+'</div>'+
     '<div class="sub">'+fmtTry(openCostTry)+'</div>'+
     '<div class="row" style="margin-top:12px">'+
       '<div><div class="lbl">Gerçekleşen K/Z (USD)</div><div class="big '+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</div></div>'+
       '<div style="text-align:right"><div class="lbl">Gerçekleşen K/Z (TL)</div><div class="big '+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</div></div>'+
-    '</div>';
+    '</div>'+
+    (feeUsd>0? '<div class="sub" style="margin-top:10px">Ödenen komisyon: '+fmtUsd(feeUsd)+' · '+fmtTry(feeTry)+'</div>':'');
 
   if(hs.length===0){ list.innerHTML='<div class="empty"><span class="em">📊</span>Henüz işlem yok.<br>Alt taraftaki <b>+</b> ile ilk alışını ekle.</div>'; return; }
 
@@ -370,8 +443,8 @@ function renderPortfoy(){
         '</div>'+
       '</div>'+
       '<div class="grid2">'+
-        '<div class="kv"><div class="k">Ortalama Alış (USD)</div><div class="v">'+fmtUsd(h.avgUsd)+'</div></div>'+
-        '<div class="kv"><div class="k">Ortalama Alış (TL)</div><div class="v">'+fmtTry(h.avgTry)+'</div></div>'+
+        '<div class="kv"><div class="k">Ort. Maliyet (USD, kom. dahil)</div><div class="v">'+fmtUsd(h.avgUsd)+'</div></div>'+
+        '<div class="kv"><div class="k">Ort. Maliyet (TL, kom. dahil)</div><div class="v">'+fmtTry(h.avgTry)+'</div></div>'+
         (open? '<div class="kv"><div class="k">Maliyet (USD)</div><div class="v">'+fmtUsd(h.qty*h.avgUsd)+'</div></div>':'')+
         (open? '<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
         (h.soldQty>0? '<div class="kv"><div class="k">Ortalama Satış (USD)</div><div class="v">'+fmtUsd(h.avgSellUsd)+'</div></div>':'')+
@@ -396,7 +469,7 @@ function renderIslemler(){
       '</div>'+
       '<div style="text-align:right">'+
         '<div class="v">'+fmtUsd(t.priceUsd)+'</div>'+
-        '<div class="small muted">tutar '+fmtUsd(val)+' · kur '+fmt(t.rate,2)+'</div>'+
+        '<div class="small muted">tutar '+fmtUsd(val)+' · kur '+fmt(t.rate,2)+(t.fee?(' · kom. %'+fmt(t.fee,2)):'')+'</div>'+
       '</div>'+
       '<button class="del" data-id="'+t.id+'" title="Sil">✕</button>'+
     '</div>';
@@ -434,6 +507,13 @@ function renderAll(){ renderPortfoy(); renderIslemler(); renderRapor(); }
 
 /* ============ Form ============ */
 let formSide="AL";
+function autoFillFee(){
+  const fees=loadFees();
+  const q=document.getElementById("f-quote").value;
+  const o=document.getElementById("f-order").value;
+  const v=fees[q] && fees[q][o];
+  if(v!=null) document.getElementById("f-fee").value=fmt(v,2);
+}
 function initForm(){
   document.getElementById("f-date").value = todayStr();
   document.querySelectorAll("#f-side button").forEach(b=> b.onclick=()=>{
@@ -441,6 +521,9 @@ function initForm(){
     document.querySelectorAll("#f-side button").forEach(x=>x.classList.remove("on-al","on-sat"));
     b.classList.add(formSide==="AL"?"on-al":"on-sat");
   });
+  document.getElementById("f-quote").onchange=autoFillFee;
+  document.getElementById("f-order").onchange=autoFillFee;
+  autoFillFee();
   document.getElementById("f-rate-refresh").onclick = async ()=>{
     const r=await refreshRatePill();
     if(r){ document.getElementById("f-rate").value = fmt(r,2); toast("Kur güncellendi"); }
@@ -463,12 +546,16 @@ function saveForm(){
   const price=toNum(document.getElementById("f-price").value);
   const date=document.getElementById("f-date").value || todayStr();
   const rate=toNum(document.getElementById("f-rate").value);
+  const quote=document.getElementById("f-quote").value;
+  const order=document.getElementById("f-order").value;
+  let fee=toNum(document.getElementById("f-fee").value);
+  if(isNaN(fee)||fee<0) fee=0;
   if(!symbol){ toast("Sembol girin (örn: CHZ)"); return; }
   if(!(qty>0)){ toast("Geçerli bir adet girin"); return; }
   if(!(price>0)){ toast("Geçerli bir fiyat girin"); return; }
   if(!(rate>0)){ toast("Dolar kuru gerekli — Yenile'ye basın veya elle girin"); return; }
   const tx={id:Date.now()+"-"+Math.random().toString(36).slice(2,7), cat, symbol, side:formSide,
-    qty, priceUsd:price, rate, date, ts:Date.now()};
+    qty, priceUsd:price, rate, fee, quote, order, date, ts:Date.now()};
   const list=loadTx(); list.push(tx); saveTx(list);
   // formu temizle
   document.getElementById("f-symbol").value="";
@@ -493,6 +580,28 @@ document.querySelectorAll("nav.tabs button[data-view]").forEach(b=>{
   if(b.dataset.view==="ayarlar-fake") return;
   b.onclick=()=>switchView(b.dataset.view);
 });
+
+/* ============ Ayarlar (komisyon) ============ */
+function openSettings(){
+  const f=loadFees();
+  document.getElementById("s-usdt-maker").value=fmt(f.usdt.maker,2);
+  document.getElementById("s-usdt-taker").value=fmt(f.usdt.taker,2);
+  document.getElementById("s-tl-maker").value=fmt(f.tl.maker,2);
+  document.getElementById("s-tl-taker").value=fmt(f.tl.taker,2);
+  document.getElementById("settingsOverlay").classList.remove("hidden");
+}
+function closeSettings(){ document.getElementById("settingsOverlay").classList.add("hidden"); }
+document.getElementById("settingsBtn").onclick=openSettings;
+document.getElementById("s-close").onclick=closeSettings;
+document.getElementById("settingsOverlay").onclick=(e)=>{ if(e.target.id==="settingsOverlay") closeSettings(); };
+document.getElementById("s-save").onclick=()=>{
+  const g=id=>{ const v=toNum(document.getElementById(id).value); return (isNaN(v)||v<0)?0:v; };
+  saveFees({
+    usdt:{maker:g("s-usdt-maker"), taker:g("s-usdt-taker")},
+    tl:{maker:g("s-tl-maker"), taker:g("s-tl-taker")}
+  });
+  autoFillFee(); renderAll(); closeSettings(); toast("Komisyon oranları kaydedildi ✓");
+};
 
 /* ============ Başlat ============ */
 initForm();
