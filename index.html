@@ -823,7 +823,23 @@ document.getElementById("b-download").onclick=async ()=>{
 document.getElementById("b-merge").onclick=()=>doImport("merge");
 document.getElementById("b-replace").onclick=()=>doImport("replace");
 
+/* ============ Başlangıç verisi (opsiyonel — link'e gömülebilir) ============ */
+const SEED_TX = [];      /*__SEED_TX__*/
+const SEED_PRICES = {};  /*__SEED_PRICES__*/
+function seedIfNeeded(){
+  try{
+    if(SEED_TX.length && !localStorage.getItem("portfoy_seeded_v1")){
+      if(!loadTx().length){
+        saveTx(SEED_TX);
+        localStorage.setItem(LS_PRICES, JSON.stringify(SEED_PRICES));
+      }
+      localStorage.setItem("portfoy_seeded_v1","1");
+    }
+  }catch(e){}
+}
+
 /* ============ Başlat ============ */
+seedIfNeeded();
 initForm();
 renderAll();
 refreshRatePill().then(()=>{ /* pill güncellendi */ });
