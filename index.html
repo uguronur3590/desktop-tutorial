@@ -81,6 +81,11 @@
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-top:10px;}
   .kv .k{font-size:11px; color:var(--muted);}
   .kv .v{font-size:14px; font-weight:600;}
+  details.calc{border-top:1px solid var(--line); margin-top:12px; padding-top:4px;}
+  details.calc summary{cursor:pointer; font-size:13px; color:var(--accent); font-weight:600; list-style:none; padding:8px 0;}
+  details.calc summary::-webkit-details-marker{display:none;}
+  .calc-out{background:var(--bg2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.5;}
+  .txedit{background:transparent;border:0;color:var(--accent);font-size:16px;padding:4px 6px;}
 
   /* form */
   label{display:block; font-size:12px; color:var(--muted); margin:12px 0 6px; font-weight:600;}
@@ -186,7 +191,7 @@
 
   <!-- EKLE -->
   <section id="view-ekle" class="hidden">
-    <h2 class="section">Yeni İşlem</h2>
+    <h2 class="section" id="ekle-title">Yeni İşlem</h2>
     <div class="card">
       <label>Kategori</label>
       <select id="f-cat">
@@ -247,6 +252,7 @@
       <div class="hint">Bugünkü kur internetten otomatik gelir. Geçmiş bir tarih için kuru elle yazabilirsiniz.</div>
 
       <button class="btn" id="f-save">Kaydet</button>
+      <button class="btn ghost" id="f-cancel-edit" style="display:none;margin-top:10px">Vazgeç</button>
     </div>
   </section>
 
@@ -443,6 +449,28 @@ function chipBar(containerId, active, onSel){
   });
 }
 
+function updateCalc(d){
+  const out=d.querySelector(".calc-out");
+  const q=toNum(d.querySelector(".calc-qty").value);
+  const p=toNum(d.querySelector(".calc-price").value);
+  const avg=parseFloat(d.dataset.avg), curQty=parseFloat(d.dataset.qty);
+  const cp=d.dataset.cp? parseFloat(d.dataset.cp):0;
+  if(!(q>0)||!(p>0)){ out.innerHTML="Eklenecek adet ve fiyatı yaz; yeni ortalama ve zarar anında çıksın (kaydedilmez)."; return; }
+  const newQty=curQty+q, newAvg=(curQty*avg + q*p)/newQty;
+  const addCost=q*p;
+  let s='Yeni ort. maliyet: <b>'+fmtPriceUsd(newAvg)+'</b> <span class="muted">(şu an '+fmtPriceUsd(avg)+')</span>'+
+        '<br>Yeni toplam: <b>'+fmt(newQty,4)+'</b> adet · +'+fmtUsd(addCost)+' yatırım';
+  if(cp>0){
+    const pctOld=(cp/avg-1)*100, pctNew=(cp/newAvg-1)*100;
+    const uplNew=(cp-newAvg)*newQty;
+    s+='<br>Güncel fiyata göre K/Z: <b class="'+cls(uplNew)+'">'+sign(pctNew)+fmt(pctNew,1)+'%</b>'+
+       ' <span class="muted">('+sign(pctOld)+fmt(pctOld,1)+'% → '+sign(pctNew)+fmt(pctNew,1)+'%)</span>';
+  }else{
+    s+='<br><span class="muted">Güncel fiyatı da girersen % zararın nereye iner onu da gösterir.</span>';
+  }
+  out.innerHTML=s;
+}
+
 function renderPortfoy(){
   chipBar("pf-chips", pfFilter, v=>{pfFilter=v; renderPortfoy();});
   const {holdings}=analyze(loadTx());
@@ -510,11 +538,24 @@ function renderPortfoy(){
       '</div>'+
       (open? '<div style="margin-top:12px"><label style="margin:0 0 6px">Güncel Fiyat (USD) — anlık kâr/zarar için</label>'+
         '<input class="cp-input" data-key="'+key+'" type="text" inputmode="decimal" value="'+(cp>0?fmt(cp,priceDec(cp)):"")+'" placeholder="örn. 0,0134"></div>':'')+
+      (open? '<details class="calc" data-avg="'+h.avgUsd+'" data-qty="'+h.qty+'" data-cp="'+(cp>0?cp:"")+'">'+
+        '<summary>🧮 Ortalama düşürme hesapla (denemeden gör)</summary>'+
+        '<div class="two" style="margin-top:6px">'+
+          '<input class="calc-qty" type="text" inputmode="decimal" placeholder="Eklenecek adet">'+
+          '<input class="calc-price" type="text" inputmode="decimal" placeholder="Alış fiyatı (USD)">'+
+        '</div>'+
+        '<div class="calc-out" style="margin-top:8px">Eklenecek adet ve fiyatı yaz; yeni ortalama ve zarar anında çıksın (kaydedilmez).</div>'+
+      '</details>':'')+
     '</div>';
   }).join("");
 
   list.querySelectorAll(".cp-input").forEach(inp=>{
     inp.onchange=()=>{ savePrice(inp.dataset.key, toNum(inp.value)); setTimeout(renderPortfoy,0); };
+  });
+  list.querySelectorAll("details.calc").forEach(d=>{
+    const run=()=>updateCalc(d);
+    d.querySelector(".calc-qty").oninput=run;
+    d.querySelector(".calc-price").oninput=run;
   });
 }
 
@@ -535,9 +576,11 @@ function renderIslemler(){
         '<div class="v">'+fmtPriceUsd(t.priceUsd)+'</div>'+
         '<div class="small muted">tutar '+fmtUsd(val)+' · kur '+fmt(t.rate,2)+(t.fee?(' · kom. %'+fmt(t.fee,2)):'')+'</div>'+
       '</div>'+
+      '<button class="txedit" data-id="'+t.id+'" title="Düzenle">✎</button>'+
       '<button class="del" data-id="'+t.id+'" title="Sil">✕</button>'+
     '</div>';
   }).join("") + '</div>';
+  list.querySelectorAll(".txedit").forEach(b=> b.onclick=()=> startEdit(b.dataset.id));
   list.querySelectorAll(".del").forEach(b=> b.onclick=()=>{
     if(confirm("Bu işlem silinsin mi?")){
       saveTx(loadTx().filter(x=>String(x.id)!==b.dataset.id));
@@ -618,16 +661,55 @@ function saveForm(){
   if(!(qty>0)){ toast("Geçerli bir adet girin"); return; }
   if(!(price>0)){ toast("Geçerli bir fiyat girin"); return; }
   if(!(rate>0)){ toast("Dolar kuru gerekli — Yenile'ye basın veya elle girin"); return; }
+  if(editingId){
+    const list=loadTx();
+    const i=list.findIndex(x=>String(x.id)===String(editingId));
+    if(i>=0){ list[i]={...list[i], cat, symbol, side:formSide, qty, priceUsd:price, rate, fee, quote, order, date}; saveTx(list); }
+    resetForm(); renderAll(); toast("İşlem güncellendi ✓"); switchView("islemler"); return;
+  }
   const tx={id:Date.now()+"-"+Math.random().toString(36).slice(2,7), cat, symbol, side:formSide,
     qty, priceUsd:price, rate, fee, quote, order, date, ts:Date.now()};
   const list=loadTx(); list.push(tx); saveTx(list);
-  // formu temizle
-  document.getElementById("f-symbol").value="";
-  document.getElementById("f-qty").value="";
-  document.getElementById("f-price").value="";
+  resetForm();
   renderAll();
   toast((formSide==="AL"?"Alış":"Satış")+" kaydedildi ✓");
   switchView("portfoy");
+}
+let editingId=null;
+function numIn(n){ return (n==null||isNaN(n))?"":String(n).replace(".",","); }
+function setSide(side){
+  formSide=side;
+  document.querySelectorAll("#f-side button").forEach(x=>{ x.classList.remove("on-al","on-sat"); if(x.dataset.side===side) x.classList.add(side==="AL"?"on-al":"on-sat"); });
+}
+function resetForm(){
+  editingId=null; setSide("AL");
+  ["f-symbol","f-qty","f-price"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("f-cat").value="kripto";
+  document.getElementById("f-date").value=todayStr();
+  autoFillFee();
+  document.getElementById("f-save").textContent="Kaydet";
+  document.getElementById("f-cancel-edit").style.display="none";
+  document.getElementById("ekle-title").textContent="Yeni İşlem";
+}
+function startAdd(){ resetForm(); switchView("ekle"); }
+function startEdit(id){
+  const t=loadTx().find(x=>String(x.id)===String(id));
+  if(!t) return;
+  editingId=t.id;
+  document.getElementById("f-cat").value=t.cat;
+  setSide(t.side);
+  document.getElementById("f-symbol").value=t.symbol;
+  document.getElementById("f-qty").value=numIn(t.qty);
+  document.getElementById("f-price").value=numIn(t.priceUsd);
+  document.getElementById("f-quote").value=t.quote||"usdt";
+  document.getElementById("f-order").value=t.order||"taker";
+  document.getElementById("f-fee").value=numIn(t.fee);
+  document.getElementById("f-date").value=t.date;
+  document.getElementById("f-rate").value=numIn(t.rate);
+  document.getElementById("f-save").textContent="Güncelle";
+  document.getElementById("f-cancel-edit").style.display="block";
+  document.getElementById("ekle-title").textContent="İşlemi Düzenle";
+  switchView("ekle");
 }
 
 /* ============ Sekmeler ============ */
@@ -642,8 +724,9 @@ function switchView(v){
 }
 document.querySelectorAll("nav.tabs button[data-view]").forEach(b=>{
   if(b.dataset.view==="ayarlar-fake") return;
-  b.onclick=()=>switchView(b.dataset.view);
+  b.onclick=()=> b.dataset.view==="ekle"? startAdd() : switchView(b.dataset.view);
 });
+document.getElementById("f-cancel-edit").onclick=()=>{ resetForm(); switchView("islemler"); };
 
 /* ============ Ayarlar (komisyon) ============ */
 function openSettings(){
