@@ -84,11 +84,16 @@
 
   /* form */
   label{display:block; font-size:12px; color:var(--muted); margin:12px 0 6px; font-weight:600;}
-  input,select{
+  input,select,textarea{
     width:100%; padding:13px 12px; border-radius:12px; background:var(--bg2);
     border:1px solid var(--line); color:var(--txt); font-size:16px; outline:none;
+    font-family:inherit;
   }
-  input:focus,select:focus{border-color:var(--accent);}
+  textarea{resize:vertical; min-height:90px; font-size:12px; line-height:1.4;}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);}
+  hr.sep{border:0; border-top:1px solid var(--line); margin:20px 0 14px;}
+  .btnrow{display:flex; gap:10px; margin-top:10px;}
+  .btnrow .btn{margin-top:0;}
   .seg{display:flex; background:var(--bg2); border:1px solid var(--line); border-radius:12px; overflow:hidden;}
   .seg button{flex:1; padding:12px; border:0; background:transparent; color:var(--muted); font-size:15px; font-weight:700;}
   .seg button.on-al{background:rgba(38,208,124,.15); color:var(--green);}
@@ -277,8 +282,28 @@
       <div><label>Piyasa yapıcı (%)</label><input id="s-tl-maker" type="text" inputmode="decimal"></div>
       <div><label>Piyasa alıcı (%)</label><input id="s-tl-taker" type="text" inputmode="decimal"></div>
     </div>
-    <button class="btn" id="s-save">Kaydet</button>
-    <button class="btn ghost" id="s-close" style="margin-top:10px">Kapat</button>
+    <button class="btn" id="s-save">Komisyonu Kaydet</button>
+
+    <hr class="sep">
+    <h3>Yedekle / Geri Yükle</h3>
+    <div class="sub">Verileriniz sadece bu cihazda saklanır. Başka cihaza taşımak veya yedek almak için aşağıyı kullanın.</div>
+
+    <label>Dışa Aktar (yedek metni)</label>
+    <textarea id="b-export" readonly onclick="this.select()"></textarea>
+    <div class="btnrow">
+      <button class="btn" id="b-copy">Kopyala</button>
+      <button class="btn ghost" id="b-download">Dosya indir</button>
+    </div>
+
+    <label style="margin-top:16px">İçe Aktar (yedek metnini yapıştırın)</label>
+    <textarea id="b-import" placeholder="Diğer cihazdan kopyaladığınız yedek metnini buraya yapıştırın…"></textarea>
+    <div class="btnrow">
+      <button class="btn" id="b-merge">Birleştir</button>
+      <button class="btn ghost" id="b-replace">Üzerine Yaz</button>
+    </div>
+    <div class="hint">Birleştir: mevcut işlemlerinizi korur, eksikleri ekler. Üzerine Yaz: her şeyi yedekle değiştirir.</div>
+
+    <button class="btn ghost" id="s-close" style="margin-top:18px">Kapat</button>
   </div>
 </div>
 
@@ -588,7 +613,65 @@ function openSettings(){
   document.getElementById("s-usdt-taker").value=fmt(f.usdt.taker,2);
   document.getElementById("s-tl-maker").value=fmt(f.tl.maker,2);
   document.getElementById("s-tl-taker").value=fmt(f.tl.taker,2);
+  document.getElementById("b-export").value=exportData();
+  document.getElementById("b-import").value="";
   document.getElementById("settingsOverlay").classList.remove("hidden");
+}
+
+/* ---- Yedekleme ---- */
+function exportData(){
+  return JSON.stringify({app:"portfoy-takip", v:1, exportedAt:new Date().toISOString(),
+    tx:loadTx(), fees:loadFees()});
+}
+async function copyText(text){
+  try{ await navigator.clipboard.writeText(text); return true; }catch(e){}
+  try{
+    const ta=document.getElementById("b-export"); ta.focus(); ta.select();
+    const ok=document.execCommand("copy"); return ok;
+  }catch(e){ return false; }
+}
+async function downloadBackup(text){
+  const filename="portfoy-yedek-"+todayStr()+".json";
+  try{
+    if(window.claude && window.claude.use){
+      const d=await window.claude.use("downloads");
+      if(d){ await d.save({filename, data:text}); return true; }
+    }
+  }catch(e){}
+  try{
+    const blob=new Blob([text],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000); return true;
+  }catch(e){ return false; }
+}
+function importData(text, mode){
+  let obj; try{ obj=JSON.parse(text); }catch(e){ throw new Error("Metin okunamadı. Yedeğin tamamını yapıştırdığınızdan emin olun."); }
+  if(!obj || !Array.isArray(obj.tx)) throw new Error("Geçerli bir yedek değil.");
+  let cur=loadTx();
+  if(mode==="replace"){ cur=obj.tx.slice(); }
+  else{
+    const ids=new Set(cur.map(t=>String(t.id)));
+    let added=0;
+    obj.tx.forEach(t=>{ if(!ids.has(String(t.id))){ cur.push(t); ids.add(String(t.id)); added++; } });
+    obj._added=added;
+  }
+  saveTx(cur);
+  if(obj.fees && obj.fees.usdt && obj.fees.tl) saveFees(obj.fees);
+  return {count: mode==="replace"? cur.length : obj._added, total: cur.length};
+}
+function doImport(mode){
+  const text=document.getElementById("b-import").value.trim();
+  if(!text){ toast("Önce yedek metnini yapıştırın"); return; }
+  if(mode==="replace" && !confirm("Mevcut tüm veriler silinip yedekle değiştirilecek. Emin misiniz?")) return;
+  try{
+    const r=importData(text, mode);
+    renderAll();
+    document.getElementById("b-export").value=exportData();
+    document.getElementById("b-import").value="";
+    toast(mode==="replace"? ("Geri yüklendi ✓ ("+r.total+" işlem)") : ("Birleştirildi ✓ ("+r.count+" yeni)"));
+  }catch(e){ toast("Hata: "+e.message); }
 }
 function closeSettings(){ document.getElementById("settingsOverlay").classList.add("hidden"); }
 document.getElementById("settingsBtn").onclick=openSettings;
@@ -600,8 +683,18 @@ document.getElementById("s-save").onclick=()=>{
     usdt:{maker:g("s-usdt-maker"), taker:g("s-usdt-taker")},
     tl:{maker:g("s-tl-maker"), taker:g("s-tl-taker")}
   });
-  autoFillFee(); renderAll(); closeSettings(); toast("Komisyon oranları kaydedildi ✓");
+  autoFillFee(); renderAll(); toast("Komisyon oranları kaydedildi ✓");
 };
+document.getElementById("b-copy").onclick=async ()=>{
+  const ok=await copyText(document.getElementById("b-export").value);
+  toast(ok? "Yedek kopyalandı ✓ — güvenli bir yere kaydedin" : "Kopyalanamadı — metni elle seçip kopyalayın");
+};
+document.getElementById("b-download").onclick=async ()=>{
+  const ok=await downloadBackup(document.getElementById("b-export").value);
+  toast(ok? "Yedek dosyası hazır" : "İndirilemedi — Kopyala'yı kullanın");
+};
+document.getElementById("b-merge").onclick=()=>doImport("merge");
+document.getElementById("b-replace").onclick=()=>doImport("replace");
 
 /* ============ Başlat ============ */
 initForm();

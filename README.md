@@ -10,6 +10,7 @@ Kripto, hisse ve emtia alım-satımlarınızı takip eden; **ortalama maliyet** 
 - ✅ **Komisyon** (borsa işlem ücreti) ana paradan otomatik düşülür
 - ✅ Satışta **gerçekleşen kâr/zarar** hem **dolar** hem **TL** olarak
 - ✅ **Aylık kâr/zarar** raporu
+- ✅ **Yedekle / Geri Yükle** (dışa-içe aktar) ile veriyi başka cihaza taşıma
 - ✅ Veriler telefonunuzda saklanır (internet olmadan da açılır)
 - ✅ Mac / Xcode / geliştirici hesabı **gerekmez**
 
