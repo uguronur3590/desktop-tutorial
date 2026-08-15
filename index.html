@@ -312,6 +312,7 @@
 const LS_TX = "portfoy_tx_v1";
 const LS_RATE = "portfoy_last_rate_v1";
 const LS_FEES = "portfoy_fees_v1";
+const LS_PRICES = "portfoy_prices_v1";
 const CATS = {kripto:"Kripto", hisse:"Hisse", emtia:"Emtia"};
 const DEFAULT_FEES = {usdt:{maker:0.01, taker:0.1}, tl:{maker:0.12, taker:0.28}};
 
@@ -328,6 +329,8 @@ function loadFees(){
   }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_FEES)); }
 }
 function saveFees(f){ localStorage.setItem(LS_FEES, JSON.stringify(f)); }
+function loadPrices(){ try{ return JSON.parse(localStorage.getItem(LS_PRICES))||{}; }catch(e){ return {}; } }
+function savePrice(key, val){ const p=loadPrices(); if(val>0) p[key]=val; else delete p[key]; localStorage.setItem(LS_PRICES, JSON.stringify(p)); }
 
 /* ============ Yardımcılar ============ */
 function toNum(s){ // basit: hem 12,5 hem 12.5 kabul et
@@ -447,22 +450,46 @@ function renderPortfoy(){
   const list=document.getElementById("pf-list");
 
   // Toplamlar
-  let openCostUsd=0, openCostTry=0, realUsd=0, realTry=0, feeUsd=0, feeTry=0;
-  hs.forEach(h=>{ if(h.qty>1e-9){ openCostUsd+=h.qty*h.avgUsd; openCostTry+=h.qty*h.avgTry; } realUsd+=h.realUsd; realTry+=h.realTry; feeUsd+=h.feeUsd; feeTry+=h.feeTry; });
+  const prices=loadPrices();
+  let openCostUsd=0, realUsd=0, realTry=0, feeUsd=0;
+  let curValUsd=0, valuedCostUsd=0, haveAnyPrice=false;
+  hs.forEach(h=>{
+    if(h.qty>1e-9){
+      openCostUsd+=h.qty*h.avgUsd;
+      const cp=prices[h.cat+"|"+h.symbol];
+      if(cp>0){ haveAnyPrice=true; curValUsd+=h.qty*cp; valuedCostUsd+=h.qty*h.avgUsd; }
+    }
+    realUsd+=h.realUsd; realTry+=h.realTry; feeUsd+=h.feeUsd;
+  });
+  const unrealUsd = curValUsd - valuedCostUsd;
+  const unrealPct = valuedCostUsd>0? (unrealUsd/valuedCostUsd*100) : 0;
+
   document.getElementById("pf-total").innerHTML =
-    '<div class="lbl">Açık Pozisyon Maliyeti (komisyon dahil)</div>'+
-    '<div class="amt">'+fmtUsd(openCostUsd)+'</div>'+
-    '<div class="sub">'+fmtTry(openCostTry)+'</div>'+
-    '<div class="row" style="margin-top:12px">'+
-      '<div><div class="lbl">Gerçekleşen K/Z (USD)</div><div class="big '+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</div></div>'+
-      '<div style="text-align:right"><div class="lbl">Gerçekleşen K/Z (TL)</div><div class="big '+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</div></div>'+
-    '</div>'+
-    (feeUsd>0? '<div class="sub" style="margin-top:10px">Ödenen komisyon: '+fmtUsd(feeUsd)+' · '+fmtTry(feeTry)+'</div>':'');
+    (haveAnyPrice
+      ? '<div class="lbl">Güncel Değer (USD)</div>'+
+        '<div class="amt">'+fmtUsd(curValUsd)+'</div>'+
+        '<div class="sub">Maliyet '+fmtUsd(valuedCostUsd)+'</div>'+
+        '<div class="row" style="margin-top:12px">'+
+          '<div><div class="lbl">Anlık K/Z (USD)</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealUsd)+fmtUsd(unrealUsd)+'</div></div>'+
+          '<div style="text-align:right"><div class="lbl">Getiri</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealPct)+fmt(unrealPct,1)+'%</div></div>'+
+        '</div>'
+      : '<div class="lbl">Açık Pozisyon Maliyeti (USD, kom. dahil)</div>'+
+        '<div class="amt">'+fmtUsd(openCostUsd)+'</div>'+
+        '<div class="sub">Kartlardaki "Güncel Fiyat" alanını doldurunca anlık USD kâr/zararın burada görünür.</div>'
+    )+
+    ((realUsd!==0||realTry!==0)? '<div class="sub" style="margin-top:10px">Gerçekleşen K/Z: <span class="'+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</span> · <span class="'+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</span></div>':'')+
+    (feeUsd>0? '<div class="sub" style="margin-top:6px">Ödenen komisyon: '+fmtUsd(feeUsd)+'</div>':'');
 
   if(hs.length===0){ list.innerHTML='<div class="empty"><span class="em">📊</span>Henüz işlem yok.<br>Alt taraftaki <b>+</b> ile ilk alışını ekle.</div>'; return; }
 
   list.innerHTML = hs.map(h=>{
     const open = h.qty>1e-9;
+    const key=h.cat+"|"+h.symbol;
+    const cp=prices[key];
+    const hasCp = open && cp>0;
+    const curVal = hasCp? h.qty*cp : 0;
+    const upl = hasCp? (cp-h.avgUsd)*h.qty : 0;
+    const uplPct = hasCp && h.avgUsd>0? ((cp/h.avgUsd-1)*100) : 0;
     return '<div class="card">'+
       '<div class="row">'+
         '<div><span class="sym big">'+h.symbol+'</span> <span class="tag '+h.cat+'">'+CATS[h.cat]+'</span></div>'+
@@ -473,14 +500,22 @@ function renderPortfoy(){
       '</div>'+
       '<div class="grid2">'+
         '<div class="kv"><div class="k">Ort. Maliyet (USD, kom. dahil)</div><div class="v">'+fmtPriceUsd(h.avgUsd)+'</div></div>'+
-        '<div class="kv"><div class="k">Ort. Maliyet (TL, kom. dahil)</div><div class="v">'+fmtPriceTry(h.avgTry)+'</div></div>'+
         (open? '<div class="kv"><div class="k">Maliyet (USD)</div><div class="v">'+fmtUsd(h.qty*h.avgUsd)+'</div></div>':'')+
-        (open? '<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
+        (hasCp? '<div class="kv"><div class="k">Güncel Değer (USD)</div><div class="v">'+fmtUsd(curVal)+'</div></div>':'')+
+        (hasCp? '<div class="kv"><div class="k">Anlık K/Z (USD)</div><div class="v '+cls(upl)+'">'+sign(upl)+fmtUsd(upl)+' <span class="small">('+sign(uplPct)+fmt(uplPct,1)+'%)</span></div></div>':'')+
         (h.soldQty>0? '<div class="kv"><div class="k">Ortalama Satış (USD)</div><div class="v">'+fmtPriceUsd(h.avgSellUsd)+'</div></div>':'')+
-        (h.soldQty>0? '<div class="kv"><div class="k">Gerçekleşen K/Z</div><div class="v '+cls(h.realUsd)+'">'+sign(h.realUsd)+fmtUsd(h.realUsd)+' <span class="small">/ '+sign(h.realTry)+fmtTry(h.realTry)+'</span></div></div>':'')+
+        (h.soldQty>0? '<div class="kv"><div class="k">Gerçekleşen K/Z</div><div class="v '+cls(h.realUsd)+'">'+sign(h.realUsd)+fmtUsd(h.realUsd)+'</div></div>':'')+
+        '<div class="kv"><div class="k">Ort. Maliyet (TL)</div><div class="v">'+fmtPriceTry(h.avgTry)+'</div></div>'+
+        (open? '<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
       '</div>'+
+      (open? '<div style="margin-top:12px"><label style="margin:0 0 6px">Güncel Fiyat (USD) — anlık kâr/zarar için</label>'+
+        '<input class="cp-input" data-key="'+key+'" type="text" inputmode="decimal" value="'+(cp>0?fmt(cp,priceDec(cp)):"")+'" placeholder="örn. 0,0134"></div>':'')+
     '</div>';
   }).join("");
+
+  list.querySelectorAll(".cp-input").forEach(inp=>{
+    inp.onchange=()=>{ savePrice(inp.dataset.key, toNum(inp.value)); setTimeout(renderPortfoy,0); };
+  });
 }
 
 function renderIslemler(){
