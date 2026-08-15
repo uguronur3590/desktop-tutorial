@@ -660,7 +660,7 @@ function openSettings(){
 /* ---- Yedekleme ---- */
 function exportData(){
   return JSON.stringify({app:"portfoy-takip", v:1, exportedAt:new Date().toISOString(),
-    tx:loadTx(), fees:loadFees()});
+    tx:loadTx(), fees:loadFees(), prices:loadPrices()});
 }
 async function copyText(text){
   try{ await navigator.clipboard.writeText(text); return true; }catch(e){}
@@ -698,6 +698,11 @@ function importData(text, mode){
   }
   saveTx(cur);
   if(obj.fees && obj.fees.usdt && obj.fees.tl) saveFees(obj.fees);
+  if(obj.prices && typeof obj.prices==="object"){
+    const curP = mode==="replace"? {} : loadPrices();
+    Object.assign(curP, obj.prices);
+    localStorage.setItem(LS_PRICES, JSON.stringify(curP));
+  }
   return {count: mode==="replace"? cur.length : obj._added, total: cur.length};
 }
 function doImport(mode){
