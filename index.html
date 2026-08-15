@@ -340,6 +340,10 @@ function fmt(n, dec=2){
 }
 function fmtUsd(n){ return "$" + fmt(n,2); }
 function fmtTry(n){ return "₺" + fmt(n,2); }
+// birim fiyat için uyarlanabilir ondalık (ucuz coinlerde daha çok basamak)
+function priceDec(n){ const a=Math.abs(n); if(!(a>0)) return 2; if(a<0.001) return 8; if(a<0.1) return 6; if(a<1) return 4; if(a<100) return 3; return 2; }
+function fmtPriceUsd(n){ return "$" + fmt(n, priceDec(n)); }
+function fmtPriceTry(n){ return "₺" + fmt(n, priceDec(n)); }
 function todayStr(){ const d=new Date(); const o=d.getTimezoneOffset(); const x=new Date(d.getTime()-o*60000); return x.toISOString().slice(0,10); }
 function monthName(ym){
   const [y,m]=ym.split("-"); const names=["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
@@ -468,11 +472,11 @@ function renderPortfoy(){
         '</div>'+
       '</div>'+
       '<div class="grid2">'+
-        '<div class="kv"><div class="k">Ort. Maliyet (USD, kom. dahil)</div><div class="v">'+fmtUsd(h.avgUsd)+'</div></div>'+
-        '<div class="kv"><div class="k">Ort. Maliyet (TL, kom. dahil)</div><div class="v">'+fmtTry(h.avgTry)+'</div></div>'+
+        '<div class="kv"><div class="k">Ort. Maliyet (USD, kom. dahil)</div><div class="v">'+fmtPriceUsd(h.avgUsd)+'</div></div>'+
+        '<div class="kv"><div class="k">Ort. Maliyet (TL, kom. dahil)</div><div class="v">'+fmtPriceTry(h.avgTry)+'</div></div>'+
         (open? '<div class="kv"><div class="k">Maliyet (USD)</div><div class="v">'+fmtUsd(h.qty*h.avgUsd)+'</div></div>':'')+
         (open? '<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
-        (h.soldQty>0? '<div class="kv"><div class="k">Ortalama Satış (USD)</div><div class="v">'+fmtUsd(h.avgSellUsd)+'</div></div>':'')+
+        (h.soldQty>0? '<div class="kv"><div class="k">Ortalama Satış (USD)</div><div class="v">'+fmtPriceUsd(h.avgSellUsd)+'</div></div>':'')+
         (h.soldQty>0? '<div class="kv"><div class="k">Gerçekleşen K/Z</div><div class="v '+cls(h.realUsd)+'">'+sign(h.realUsd)+fmtUsd(h.realUsd)+' <span class="small">/ '+sign(h.realTry)+fmtTry(h.realTry)+'</span></div></div>':'')+
       '</div>'+
     '</div>';
@@ -493,7 +497,7 @@ function renderIslemler(){
         '<div class="small muted">'+t.date+' · <span class="'+(t.side==="AL"?"side-al":"side-sat")+'">'+(t.side==="AL"?"ALIŞ":"SATIŞ")+'</span> · '+fmt(t.qty,4)+' adet</div>'+
       '</div>'+
       '<div style="text-align:right">'+
-        '<div class="v">'+fmtUsd(t.priceUsd)+'</div>'+
+        '<div class="v">'+fmtPriceUsd(t.priceUsd)+'</div>'+
         '<div class="small muted">tutar '+fmtUsd(val)+' · kur '+fmt(t.rate,2)+(t.fee?(' · kom. %'+fmt(t.fee,2)):'')+'</div>'+
       '</div>'+
       '<button class="del" data-id="'+t.id+'" title="Sil">✕</button>'+
