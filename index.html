@@ -954,8 +954,23 @@ function seedIfNeeded(){
   }catch(e){}
 }
 
+// Link'teki #d=... ile veri yükleme (veri linkin içinde, sayfada değil)
+function importFromHash(){
+  try{
+    const m=(location.hash||"").match(/[#&]d=([^&]*)/);
+    if(!m) return;
+    let b=decodeURIComponent(m[1]).replace(/-/g,"+").replace(/_/g,"/");
+    while(b.length%4) b+="=";
+    const json=decodeURIComponent(escape(atob(b)));
+    const r=importData(json,"merge");
+    history.replaceState(null,"",location.pathname+location.search);
+    toast("Verileriniz yüklendi ✓ ("+r.total+" işlem)");
+  }catch(e){ toast("Link verisi okunamadı"); }
+}
+
 /* ============ Başlat ============ */
 seedIfNeeded();
+importFromHash();
 initForm();
 renderAll();
 refreshRatePill().then(()=>{ /* pill güncellendi */ });
