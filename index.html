@@ -305,8 +305,10 @@
       <button class="btn ghost" id="b-download">Dosya indir</button>
     </div>
 
-    <label style="margin-top:16px">İçe Aktar (yedek metnini yapıştırın)</label>
-    <textarea id="b-import" placeholder="Diğer cihazdan kopyaladığınız yedek metnini buraya yapıştırın…"></textarea>
+    <label style="margin-top:16px">İçe Aktar</label>
+    <input id="b-file" type="file" accept=".json,application/json,text/plain" style="padding:10px">
+    <div class="hint" style="margin-bottom:8px">İndirdiğiniz yedek dosyasını seçin — metni aşağı otomatik gelir. Ya da metni elle yapıştırın.</div>
+    <textarea id="b-import" placeholder="Yedek metnini buraya yapıştırın (veya yukarıdan dosya seçin)…"></textarea>
     <div class="btnrow">
       <button class="btn" id="b-merge">Birleştir</button>
       <button class="btn ghost" id="b-replace">Üzerine Yaz</button>
@@ -957,6 +959,16 @@ document.getElementById("b-download").onclick=async ()=>{
 };
 document.getElementById("b-merge").onclick=()=>doImport("merge");
 document.getElementById("b-replace").onclick=()=>doImport("replace");
+document.getElementById("b-file").onchange=(e)=>{
+  const f=e.target.files && e.target.files[0];
+  if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ document.getElementById("b-import").value=String(r.result||"").trim();
+    toast("Dosya okundu — 'Üzerine Yaz' veya 'Birleştir'e basın"); };
+  r.onerror=()=>toast("Dosya okunamadı");
+  r.readAsText(f);
+  e.target.value=""; // aynı dosya tekrar seçilebilsin
+};
 
 /* ============ Başlangıç verisi (opsiyonel — link'e gömülebilir) ============ */
 const SEED_TX = [];      /*__SEED_TX__*/
