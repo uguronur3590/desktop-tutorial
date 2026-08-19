@@ -25,8 +25,8 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  // Kur API'sine dokunma
-  if (url.hostname.includes("er-api.com") || url.hostname.includes("frankfurter")) return;
+  // Dış API'lere dokunma (kur + canlı fiyat)
+  if (url.hostname.includes("er-api.com") || url.hostname.includes("frankfurter") || url.hostname.includes("binance.")) return;
 
   const isHTML = req.mode === "navigate" ||
     (req.headers.get("accept") || "").includes("text/html") ||
