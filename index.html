@@ -976,6 +976,9 @@ renderAll();
 refreshRatePill().then(()=>{ /* pill güncellendi */ });
 
 if("serviceWorker" in navigator){
+  // Yeni sürüm devralınca sayfayı bir kez tazele (güncel uygulama + link verisi işlensin)
+  let _reloaded = !navigator.serviceWorker.controller; // ilk ziyarette reload etme
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{ if(_reloaded) return; _reloaded=true; location.reload(); });
   window.addEventListener("load", ()=> navigator.serviceWorker.register("sw.js").catch(()=>{}));
 }
 </script>
