@@ -81,9 +81,9 @@
   .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-top:10px;}
   .kv .k{font-size:11px; color:var(--muted);}
   .kv .v{font-size:14px; font-weight:600;}
-  details.calc{border-top:1px solid var(--line); margin-top:12px; padding-top:4px;}
-  details.calc summary{cursor:pointer; font-size:13px; color:var(--accent); font-weight:600; list-style:none; padding:8px 0;}
-  details.calc summary::-webkit-details-marker{display:none;}
+  details.calc, details.calc2{border-top:1px solid var(--line); margin-top:12px; padding-top:4px;}
+  details.calc summary, details.calc2 summary{cursor:pointer; font-size:13px; color:var(--accent); font-weight:600; list-style:none; padding:8px 0;}
+  details.calc summary::-webkit-details-marker, details.calc2 summary::-webkit-details-marker{display:none;}
   .calc-out{background:var(--bg2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.5;}
   .txedit{background:transparent;border:0;color:var(--accent);font-size:16px;padding:4px 6px;}
 
@@ -499,6 +499,23 @@ function updateCalc(d){
   out.innerHTML=s;
 }
 
+function updateSellCalc(d){
+  const out=d.querySelector(".sell-out");
+  const pct=toNum(d.querySelector(".sell-pct").value);
+  let fee=toNum(d.querySelector(".sell-fee").value); if(isNaN(fee)||fee<0) fee=0;
+  const avg=parseFloat(d.dataset.avg);
+  const cp=d.dataset.cp? parseFloat(d.dataset.cp):0;
+  if(isNaN(pct)){ out.innerHTML="Hedeflediğin net kâr %’sini yaz (örn. 10); komisyon dahil kaçtan satman gerektiğini gösterir."; return; }
+  const sell = avg*(1+pct/100)/(1-fee/100);
+  let s='Satış fiyatı: <b>'+fmtPriceUsd(sell)+'</b>'+
+        '<br><span class="muted">ort. maliyet '+fmtPriceUsd(avg)+' · satış kom. %'+fmt(fee,2)+' dahil, net %'+fmt(pct,1)+' kâr</span>';
+  if(cp>0){
+    const up=(sell/cp-1)*100;
+    s+='<br>Güncel fiyattan (<b>'+fmtPriceUsd(cp)+'</b>) <b class="'+(up>=0?"pos":"neg")+'">'+(up>=0?"+":"")+fmt(up,1)+'%</b> '+(up>=0?"yukarıda":"aşağıda");
+  }
+  out.innerHTML=s;
+}
+
 function renderPortfoy(){
   chipBar("pf-chips", pfFilter, v=>{pfFilter=v; renderPortfoy();});
   const {holdings}=analyze(loadTx());
@@ -574,6 +591,14 @@ function renderPortfoy(){
         '</div>'+
         '<div class="calc-out" style="margin-top:8px">Eklenecek adet ve fiyatı yaz; yeni ortalama ve zarar anında çıksın (kaydedilmez).</div>'+
       '</details>':'')+
+      (open? '<details class="calc2" data-avg="'+h.avgUsd+'" data-cp="'+(cp>0?cp:"")+'">'+
+        '<summary>🎯 Hedef kârdan satış fiyatı hesapla</summary>'+
+        '<div class="two" style="margin-top:6px">'+
+          '<input class="sell-pct" type="text" inputmode="decimal" placeholder="Net kâr %">'+
+          '<input class="sell-fee" type="text" inputmode="decimal" placeholder="Satış kom. %" value="'+fmt(loadFees().usdt.taker,2)+'">'+
+        '</div>'+
+        '<div class="calc-out sell-out" style="margin-top:8px">Hedeflediğin net kâr %’sini yaz (örn. 10); komisyon dahil kaçtan satman gerektiğini gösterir.</div>'+
+      '</details>':'')+
     '</div>';
   }).join("");
 
@@ -584,6 +609,11 @@ function renderPortfoy(){
     const run=()=>updateCalc(d);
     d.querySelector(".calc-qty").oninput=run;
     d.querySelector(".calc-price").oninput=run;
+  });
+  list.querySelectorAll("details.calc2").forEach(d=>{
+    const run=()=>updateSellCalc(d);
+    d.querySelector(".sell-pct").oninput=run;
+    d.querySelector(".sell-fee").oninput=run;
   });
 }
 
