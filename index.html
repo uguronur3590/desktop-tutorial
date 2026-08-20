@@ -349,10 +349,7 @@ function savePrice(key, val){ const p=loadPrices(); if(val>0) p[key]=val; else d
 // Nakit (USDT): dışarıdan net para (yatır−çek). Toplam nakit = extCash + işlem akışı.
 function loadCash(){ const v=parseFloat(localStorage.getItem(LS_CASH)); return isNaN(v)?0:v; }
 function saveCash(v){ localStorage.setItem(LS_CASH, String(v)); }
-function tradeFlowUsd(){ // kripto satışları +, alışları − (USDT akışı, komisyonsuz yaklaşık)
-  let f=0; loadTx().forEach(t=>{ if(t.cat!=="kripto") return; const v=t.priceUsd*t.qty; f += (t.side==="SAT"? v : -v); }); return f;
-}
-function cashUsdt(){ return loadCash() + tradeFlowUsd(); }
+function cashUsdt(){ return loadCash(); } // gerçek USDT bakiyesi (elle ayarlanır, satışta otomatik artar)
 // TL nakit: elle yönetilen bakiye (düşük bakiye dönüştürme, dışarıdan TL vb.)
 function loadCashTl(){ const v=parseFloat(localStorage.getItem(LS_CASH_TL)); return isNaN(v)?0:v; }
 function saveCashTl(v){ localStorage.setItem(LS_CASH_TL, String(v)); }
@@ -579,7 +576,7 @@ function renderPortfoy(){
   if(includeCash){
     cashEl.innerHTML=
       '<div class="card"><div class="row">'+
-        '<div><b>💵 Nakit (USDT)</b><div class="small muted">Satışta artar, alışta azalır</div></div>'+
+        '<div><b>💵 Nakit (USDT)</b><div class="small muted">Satışta otomatik artar · gerçek bakiyeyi Ayarla</div></div>'+
         '<div class="big '+(cash<0?"neg":"")+'">'+fmtUsd(cash)+'</div></div>'+
         '<div class="btnrow" style="margin-top:10px">'+
           '<button class="btn ghost" id="cash-set">Ayarla</button>'+
@@ -598,7 +595,7 @@ function renderPortfoy(){
         '</div>'+
         '<button class="btn ghost" id="tl-toUsdt" style="margin-top:8px">💱 TL → USDT çevir</button>'+
       '</div>';
-    document.getElementById("cash-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ toplam USDT bakiyeniz:", cash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCash(v - tradeFlowUsd()); renderPortfoy(); toast("USDT bakiye ayarlandı ✓"); } };
+    document.getElementById("cash-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ toplam USDT bakiyeniz:", cash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCash(v); renderPortfoy(); toast("USDT bakiye ayarlandı ✓"); } };
     document.getElementById("cash-dep").onclick=()=>{ const v=toNum(prompt("Yatırılan (dışarıdan gelen) USDT:")); if(v>0){ saveCash(loadCash()+v); renderPortfoy(); toast("+"+fmtUsd(v)+" eklendi"); } };
     document.getElementById("cash-wd").onclick=()=>{ const v=toNum(prompt("Çekilen USDT:")); if(v>0){ saveCash(loadCash()-v); renderPortfoy(); toast("−"+fmtUsd(v)+" çekildi"); } };
     document.getElementById("tl-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ TL bakiyeniz:", tlCash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCashTl(v); renderPortfoy(); toast("TL bakiye ayarlandı ✓"); } };
@@ -892,9 +889,17 @@ function saveForm(){
   const tx={id:Date.now()+"-"+Math.random().toString(36).slice(2,7), cat, symbol, side:formSide,
     qty, priceUsd:price, rate, fee, quote, order, date, ts:Date.now()};
   const list=loadTx(); list.push(tx); saveTx(list);
+  // Kripto satışı: eline geçen USDT'yi nakit bakiyeye ekle (toplam düşmesin)
+  let cashNote="";
+  if(cat==="kripto" && formSide==="SAT"){
+    const proceeds=price*qty*(1-(fee||0)/100);
+    if(quote==="tl") saveCashTl(loadCashTl()+proceeds*(rate||1));
+    else saveCash(loadCash()+proceeds);
+    cashNote=" · nakite +"+(quote==="tl"? fmtTry(proceeds*(rate||1)) : fmtUsd(proceeds));
+  }
   resetForm();
   renderAll();
-  toast((formSide==="AL"?"Alış":"Satış")+" kaydedildi ✓");
+  toast((formSide==="AL"?"Alış":"Satış")+" kaydedildi ✓"+cashNote);
   switchView("portfoy");
 }
 let editingId=null;
