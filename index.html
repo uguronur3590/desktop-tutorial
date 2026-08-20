@@ -327,6 +327,7 @@ const LS_RATE = "portfoy_last_rate_v1";
 const LS_FEES = "portfoy_fees_v1";
 const LS_PRICES = "portfoy_prices_v1";
 const LS_CASH = "portfoy_cash_v1";
+const LS_CASH_TL = "portfoy_cash_tl_v1";
 const CATS = {kripto:"Kripto", hisse:"Hisse", emtia:"Emtia"};
 const DEFAULT_FEES = {usdt:{maker:0.01, taker:0.1}, tl:{maker:0.12, taker:0.28}};
 
@@ -352,6 +353,10 @@ function tradeFlowUsd(){ // kripto satışları +, alışları − (USDT akış�
   let f=0; loadTx().forEach(t=>{ if(t.cat!=="kripto") return; const v=t.priceUsd*t.qty; f += (t.side==="SAT"? v : -v); }); return f;
 }
 function cashUsdt(){ return loadCash() + tradeFlowUsd(); }
+// TL nakit: elle yönetilen bakiye (düşük bakiye dönüştürme, dışarıdan TL vb.)
+function loadCashTl(){ const v=parseFloat(localStorage.getItem(LS_CASH_TL)); return isNaN(v)?0:v; }
+function saveCashTl(v){ localStorage.setItem(LS_CASH_TL, String(v)); }
+function usableRate(){ if(currentRate>0) return currentRate; const c=cachedRate(); return (c&&c.rate>0)? c.rate : 0; }
 
 // Canlı kripto fiyatları (Binance USDT paritesi). silent=true → bildirim yok (açılışta).
 async function fetchLivePrices(silent){
@@ -546,39 +551,61 @@ function renderPortfoy(){
   const unrealUsd = curValUsd - valuedCostUsd;
   const unrealPct = valuedCostUsd>0? (unrealUsd/valuedCostUsd*100) : 0;
   const cash = cashUsdt();
-  const includeCash = (pfFilter==="hepsi" || pfFilter==="kripto");
-  const cashPart = includeCash? cash : 0;
+  const tlCash = loadCashTl();
+  const rate = usableRate();
+  const tlInUsd = rate>0? tlCash/rate : 0;
+  const includeCash = (pfFilter==="hepsi");
+  const cashPart = includeCash? (cash + tlInUsd) : 0;
+  const nakitSub = includeCash? (' · Nakit(USDT) '+fmtUsd(cash)+(tlCash!==0? ' · Nakit(TL) '+fmtTry(tlCash):'')) : '';
 
   document.getElementById("pf-total").innerHTML =
     (haveAnyPrice
       ? '<div class="lbl">Toplam Değer (USD)</div>'+
         '<div class="amt">'+fmtUsd(curValUsd + cashPart)+'</div>'+
-        '<div class="sub">Kripto '+fmtUsd(curValUsd)+(includeCash? ' · Nakit(USDT) '+fmtUsd(cash):'')+'</div>'+
+        '<div class="sub">Kripto '+fmtUsd(curValUsd)+nakitSub+'</div>'+
         '<div class="row" style="margin-top:12px">'+
           '<div><div class="lbl">Anlık K/Z (USD)</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealUsd)+fmtUsd(unrealUsd)+'</div></div>'+
           '<div style="text-align:right"><div class="lbl">Getiri</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealPct)+fmt(unrealPct,1)+'%</div></div>'+
         '</div>'
       : '<div class="lbl">Toplam (maliyet + nakit)</div>'+
         '<div class="amt">'+fmtUsd(openCostUsd + cashPart)+'</div>'+
-        '<div class="sub">Maliyet '+fmtUsd(openCostUsd)+(includeCash? ' · Nakit(USDT) '+fmtUsd(cash):'')+' · Fiyat çekince anlık K/Z görünür.</div>'
+        '<div class="sub">Maliyet '+fmtUsd(openCostUsd)+nakitSub+' · Fiyat çekince anlık K/Z görünür.</div>'
     )+
     ((realUsd!==0||realTry!==0)? '<div class="sub" style="margin-top:10px">Gerçekleşen K/Z: <span class="'+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</span> · <span class="'+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</span></div>':'')+
     (feeUsd>0? '<div class="sub" style="margin-top:6px">Ödenen komisyon: '+fmtUsd(feeUsd)+'</div>':'');
 
-  // Nakit (USDT) kartı
+  // Nakit kartları (USDT + TL)
   const cashEl=document.getElementById("pf-cash");
   if(includeCash){
-    cashEl.innerHTML='<div class="card"><div class="row">'+
-      '<div><b>💵 Nakit (USDT)</b><div class="small muted">Satışta artar, alışta azalır</div></div>'+
-      '<div class="big '+(cash<0?"neg":"")+'">'+fmtUsd(cash)+'</div></div>'+
-      '<div class="btnrow" style="margin-top:10px">'+
-        '<button class="btn ghost" id="cash-set">Bakiye Ayarla</button>'+
-        '<button class="btn ghost" id="cash-dep">＋ Yatır</button>'+
-        '<button class="btn ghost" id="cash-wd">－ Çek</button>'+
-      '</div></div>';
-    document.getElementById("cash-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ toplam USDT bakiyeniz:", cash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCash(v - tradeFlowUsd()); renderPortfoy(); toast("Nakit bakiye ayarlandı ✓"); } };
+    cashEl.innerHTML=
+      '<div class="card"><div class="row">'+
+        '<div><b>💵 Nakit (USDT)</b><div class="small muted">Satışta artar, alışta azalır</div></div>'+
+        '<div class="big '+(cash<0?"neg":"")+'">'+fmtUsd(cash)+'</div></div>'+
+        '<div class="btnrow" style="margin-top:10px">'+
+          '<button class="btn ghost" id="cash-set">Ayarla</button>'+
+          '<button class="btn ghost" id="cash-dep">＋ Yatır</button>'+
+          '<button class="btn ghost" id="cash-wd">－ Çek</button>'+
+        '</div>'+
+        '<button class="btn ghost" id="cash-toTl" style="margin-top:8px">💱 USDT → TL çevir</button>'+
+      '</div>'+
+      '<div class="card"><div class="row">'+
+        '<div><b>₺ Nakit (TL)</b><div class="small muted">Düşük bakiye dönüştürme / dışarıdan TL</div></div>'+
+        '<div class="big '+(tlCash<0?"neg":"")+'">'+fmtTry(tlCash)+'</div></div>'+
+        '<div class="btnrow" style="margin-top:10px">'+
+          '<button class="btn ghost" id="tl-set">Ayarla</button>'+
+          '<button class="btn ghost" id="tl-dep">＋ Ekle</button>'+
+          '<button class="btn ghost" id="tl-wd">－ Çıkar</button>'+
+        '</div>'+
+        '<button class="btn ghost" id="tl-toUsdt" style="margin-top:8px">💱 TL → USDT çevir</button>'+
+      '</div>';
+    document.getElementById("cash-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ toplam USDT bakiyeniz:", cash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCash(v - tradeFlowUsd()); renderPortfoy(); toast("USDT bakiye ayarlandı ✓"); } };
     document.getElementById("cash-dep").onclick=()=>{ const v=toNum(prompt("Yatırılan (dışarıdan gelen) USDT:")); if(v>0){ saveCash(loadCash()+v); renderPortfoy(); toast("+"+fmtUsd(v)+" eklendi"); } };
     document.getElementById("cash-wd").onclick=()=>{ const v=toNum(prompt("Çekilen USDT:")); if(v>0){ saveCash(loadCash()-v); renderPortfoy(); toast("−"+fmtUsd(v)+" çekildi"); } };
+    document.getElementById("tl-set").onclick=()=>{ const s=prompt("Borsanızdaki ŞU ANKİ TL bakiyeniz:", tlCash.toFixed(2)); if(s==null)return; const v=toNum(s); if(!isNaN(v)){ saveCashTl(v); renderPortfoy(); toast("TL bakiye ayarlandı ✓"); } };
+    document.getElementById("tl-dep").onclick=()=>{ const v=toNum(prompt("Eklenecek TL (düşük bakiye dönüştürme / dışarıdan):")); if(v>0){ saveCashTl(loadCashTl()+v); renderPortfoy(); toast("+"+fmtTry(v)+" eklendi"); } };
+    document.getElementById("tl-wd").onclick=()=>{ const v=toNum(prompt("Çıkarılacak TL:")); if(v>0){ saveCashTl(loadCashTl()-v); renderPortfoy(); toast("−"+fmtTry(v)+" çıkarıldı"); } };
+    document.getElementById("cash-toTl").onclick=()=>{ if(!(rate>0)){ toast("Önce kur gerekli — Kur'a dokunup Yenile"); return; } const v=toNum(prompt("Kaç USDT, TL'ye çevrilecek? (kur "+fmt(rate,2)+")")); if(v>0){ saveCash(loadCash()-v); saveCashTl(loadCashTl()+v*rate); renderPortfoy(); toast(fmtUsd(v)+" → "+fmtTry(v*rate)); } };
+    document.getElementById("tl-toUsdt").onclick=()=>{ if(!(rate>0)){ toast("Önce kur gerekli — Kur'a dokunup Yenile"); return; } const v=toNum(prompt("Kaç TL, USDT'ye çevrilecek? (kur "+fmt(rate,2)+")")); if(v>0){ saveCashTl(loadCashTl()-v); saveCash(loadCash()+v/rate); renderPortfoy(); toast(fmtTry(v)+" → "+fmtUsd(v/rate)); } };
   } else { cashEl.innerHTML=""; }
 
   if(hs.length===0){ list.innerHTML='<div class="empty"><span class="em">📊</span>Henüz işlem yok.<br>Alt taraftaki <b>+</b> ile ilk alışını ekle.</div>'; return; }
@@ -938,7 +965,7 @@ function openSettings(){
 /* ---- Yedekleme ---- */
 function exportData(){
   return JSON.stringify({app:"portfoy-takip", v:1, exportedAt:new Date().toISOString(),
-    tx:loadTx(), fees:loadFees(), prices:loadPrices(), cash:loadCash()});
+    tx:loadTx(), fees:loadFees(), prices:loadPrices(), cash:loadCash(), cashTl:loadCashTl()});
 }
 async function copyText(text){
   try{ await navigator.clipboard.writeText(text); return true; }catch(e){}
@@ -982,6 +1009,7 @@ function importData(text, mode){
     localStorage.setItem(LS_PRICES, JSON.stringify(curP));
   }
   if(obj.cash!=null && !isNaN(parseFloat(obj.cash))) saveCash(parseFloat(obj.cash));
+  if(obj.cashTl!=null && !isNaN(parseFloat(obj.cashTl))) saveCashTl(parseFloat(obj.cashTl));
   return {count: mode==="replace"? cur.length : obj._added, total: cur.length};
 }
 function doImport(mode){
