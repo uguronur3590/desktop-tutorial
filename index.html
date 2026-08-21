@@ -623,6 +623,10 @@ function renderPortfoy(){
                : '<div class="small muted">Pozisyon kapalı</div>')+
         '</div>'+
       '</div>'+
+      '<div class="btnrow" style="margin-top:10px">'+
+        '<button class="btn trade-btn" style="background:rgba(38,208,124,.15);color:var(--green);margin-top:0" data-trade="AL" data-key="'+key+'">＋ Al</button>'+
+        '<button class="btn trade-btn" style="background:rgba(248,81,73,.15);color:var(--red);margin-top:0" data-trade="SAT" data-key="'+key+'">－ Sat</button>'+
+      '</div>'+
       '<div class="grid2">'+
         '<div class="kv"><div class="k">Ort. Maliyet (USD, kom. dahil)</div><div class="v">'+fmtPriceUsd(h.avgUsd)+'</div></div>'+
         (open? '<div class="kv"><div class="k">Maliyet (USD)</div><div class="v">'+fmtUsd(h.qty*h.avgUsd)+'</div></div>':'')+
@@ -656,6 +660,9 @@ function renderPortfoy(){
 
   list.querySelectorAll(".cp-input").forEach(inp=>{
     inp.onchange=()=>{ savePrice(inp.dataset.key, toNum(inp.value)); setTimeout(renderPortfoy,0); };
+  });
+  list.querySelectorAll(".trade-btn").forEach(b=>{
+    b.onclick=()=>{ const p=b.dataset.key.split("|"); startTradeFor(p[0], p[1], b.dataset.trade); };
   });
   list.querySelectorAll("details.calc").forEach(d=>{
     const run=()=>updateCalc(d);
@@ -919,6 +926,18 @@ function resetForm(){
   document.getElementById("ekle-title").textContent="Yeni İşlem";
 }
 function startAdd(){ resetForm(); switchView("ekle"); }
+function startTradeFor(cat, symbol, side){
+  resetForm();
+  document.getElementById("f-cat").value=cat;
+  setSide(side);
+  document.getElementById("f-symbol").value=symbol;
+  const cp=loadPrices()[cat+"|"+symbol];
+  if(cp>0) document.getElementById("f-price").value=numIn(cp);
+  autoFillFee();
+  document.getElementById("ekle-title").textContent=(side==="AL"?"Alış":"Satış")+" — "+symbol;
+  switchView("ekle");
+  setTimeout(()=>{ const q=document.getElementById("f-qty"); if(q) q.focus(); },60);
+}
 function startEdit(id){
   const t=loadTx().find(x=>String(x.id)===String(id));
   if(!t) return;
