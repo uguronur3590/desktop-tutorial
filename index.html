@@ -96,6 +96,8 @@
   }
   textarea{resize:vertical; min-height:90px; font-size:12px; line-height:1.4;}
   input:focus,select:focus,textarea:focus{border-color:var(--accent);}
+  input[type=range]{width:100%; accent-color:var(--accent); height:28px; padding:0;}
+  .pctbtn{padding:6px 10px; font-size:13px; border-radius:8px; background:var(--chip); border:1px solid var(--line); color:var(--txt);}
   hr.sep{border:0; border-top:1px solid var(--line); margin:20px 0 14px;}
   .btnrow{display:flex; gap:10px; margin-top:10px;}
   .btnrow .btn{margin-top:0;}
@@ -210,6 +212,20 @@
 
       <label>Sembol / İsim <span class="muted">(örn: CHZ, THYAO, XAU)</span></label>
       <input id="f-symbol" type="text" autocapitalize="characters" autocomplete="off" placeholder="CHZ" />
+      <div id="f-holding" class="hint" style="margin-top:6px"></div>
+      <div id="f-slider-wrap" style="display:none; margin-top:8px">
+        <label style="margin:0 0 6px">Satış miktarı — % kaydır</label>
+        <input id="f-slider" type="range" min="0" max="100" step="1" value="0" />
+        <div class="row" style="margin-top:2px">
+          <span class="small muted" id="f-slider-lbl">%0</span>
+          <div style="display:flex; gap:6px">
+            <button type="button" class="pctbtn" data-p="25">%25</button>
+            <button type="button" class="pctbtn" data-p="50">%50</button>
+            <button type="button" class="pctbtn" data-p="75">%75</button>
+            <button type="button" class="pctbtn" data-p="100">%100</button>
+          </div>
+        </div>
+      </div>
 
       <div class="two">
         <div>
@@ -243,8 +259,8 @@
       <input id="f-fee" type="text" inputmode="decimal" placeholder="0,00" />
       <div class="hint">Alışta komisyon maliyete eklenir, satışta kârdan düşülür. Oranları ⚙︎ Ayarlar'dan değiştirebilirsiniz.</div>
 
-      <label>Tarih</label>
-      <input id="f-date" type="date" />
+      <label>Tarih / Saat</label>
+      <input id="f-date" type="datetime-local" />
 
       <label>Dolar Kuru (USD/TRY)</label>
       <div class="rate-input-wrap">
@@ -687,7 +703,7 @@ function renderIslemler(){
     return '<div class="txitem">'+
       '<div>'+
         '<div><span class="sym">'+t.symbol+'</span> <span class="tag '+t.cat+'">'+CATS[t.cat]+'</span></div>'+
-        '<div class="small muted">'+t.date+' · <span class="'+(t.side==="AL"?"side-al":"side-sat")+'">'+(t.side==="AL"?"ALIŞ":"SATIŞ")+'</span> · '+fmt(t.qty,4)+' adet</div>'+
+        '<div class="small muted">'+t.date+(t.ts&&tsToLocalDT(t.ts).slice(11)!=="00:00"? " "+tsToLocalDT(t.ts).slice(11,16):"")+' · <span class="'+(t.side==="AL"?"side-al":"side-sat")+'">'+(t.side==="AL"?"ALIŞ":"SATIŞ")+'</span> · '+fmt(t.qty,4)+' adet</div>'+
       '</div>'+
       '<div style="text-align:right">'+
         '<div class="v">'+fmtPriceUsd(t.priceUsd)+'</div>'+
@@ -847,13 +863,34 @@ function autoFillFee(){
   const v=fees[q] && fees[q][o];
   if(v!=null) document.getElementById("f-fee").value=fmt(v,2);
 }
+function nowLocalDT(){ const d=new Date(); const o=d.getTimezoneOffset(); return new Date(d.getTime()-o*60000).toISOString().slice(0,16); }
+function tsToLocalDT(ts){ const d=new Date(ts); if(isNaN(d.getTime())) return nowLocalDT(); const o=d.getTimezoneOffset(); return new Date(d.getTime()-o*60000).toISOString().slice(0,16); }
+function currentHoldingQty(){
+  const cat=document.getElementById("f-cat").value;
+  const sym=document.getElementById("f-symbol").value.trim().toUpperCase();
+  if(!sym) return 0;
+  const h=analyze(loadTx()).holdings.find(x=>x.cat===cat && x.symbol===sym);
+  return h? h.qty : 0;
+}
+function sliderToQty(){
+  const p=+document.getElementById("f-slider").value, q=currentHoldingQty();
+  const amt=q*p/100;
+  document.getElementById("f-qty").value = amt>0? numIn(+amt.toFixed(8)) : "";
+  document.getElementById("f-slider-lbl").textContent="%"+p+" · "+fmt(amt,4)+" adet";
+}
+function updateHoldingInfo(){
+  const q=currentHoldingQty();
+  const sym=document.getElementById("f-symbol").value.trim().toUpperCase();
+  document.getElementById("f-holding").innerHTML = (sym && q>1e-9)? ("Elinizde: <b>"+fmt(q,4)+"</b> "+sym) : "";
+  document.getElementById("f-slider-wrap").style.display = (formSide==="SAT" && q>1e-9)? "block" : "none";
+}
 function initForm(){
-  document.getElementById("f-date").value = todayStr();
-  document.querySelectorAll("#f-side button").forEach(b=> b.onclick=()=>{
-    formSide=b.dataset.side;
-    document.querySelectorAll("#f-side button").forEach(x=>x.classList.remove("on-al","on-sat"));
-    b.classList.add(formSide==="AL"?"on-al":"on-sat");
-  });
+  document.getElementById("f-date").value = nowLocalDT();
+  document.querySelectorAll("#f-side button").forEach(b=> b.onclick=()=>{ setSide(b.dataset.side); updateHoldingInfo(); });
+  document.getElementById("f-cat").onchange=()=>{ updateHoldingInfo(); };
+  document.getElementById("f-symbol").oninput=()=>{ updateHoldingInfo(); };
+  document.getElementById("f-slider").oninput=sliderToQty;
+  document.querySelectorAll(".pctbtn").forEach(b=> b.onclick=()=>{ document.getElementById("f-slider").value=b.dataset.p; sliderToQty(); });
   document.getElementById("f-quote").onchange=autoFillFee;
   document.getElementById("f-order").onchange=autoFillFee;
   autoFillFee();
@@ -863,7 +900,7 @@ function initForm(){
     else toast("Kur alınamadı, elle girin");
   };
   document.getElementById("f-date").onchange = (e)=>{
-    if(e.target.value===todayStr() && currentRate){ document.getElementById("f-rate").value=fmt(currentRate,2); }
+    if(String(e.target.value).slice(0,10)===todayStr() && currentRate){ document.getElementById("f-rate").value=fmt(currentRate,2); }
   };
   document.getElementById("f-save").onclick = saveForm;
 }
@@ -877,7 +914,9 @@ function saveForm(){
   const symbol=document.getElementById("f-symbol").value.trim().toUpperCase();
   const qty=toNum(document.getElementById("f-qty").value);
   const price=toNum(document.getElementById("f-price").value);
-  const date=document.getElementById("f-date").value || todayStr();
+  const dtVal=document.getElementById("f-date").value;
+  const date = dtVal? dtVal.slice(0,10) : todayStr();
+  const dtTs = dtVal? new Date(dtVal).getTime() : Date.now();
   const rate=toNum(document.getElementById("f-rate").value);
   const quote=document.getElementById("f-quote").value;
   const order=document.getElementById("f-order").value;
@@ -890,12 +929,13 @@ function saveForm(){
   if(editingId){
     const list=loadTx();
     const i=list.findIndex(x=>String(x.id)===String(editingId));
-    if(i>=0){ list[i]={...list[i], cat, symbol, side:formSide, qty, priceUsd:price, rate, fee, quote, order, date}; saveTx(list); }
+    if(i>=0){ list[i]={...list[i], cat, symbol, side:formSide, qty, priceUsd:price, rate, fee, quote, order, date, ts:dtTs}; saveTx(list); }
     resetForm(); renderAll(); toast("İşlem güncellendi ✓"); switchView("islemler"); return;
   }
   const tx={id:Date.now()+"-"+Math.random().toString(36).slice(2,7), cat, symbol, side:formSide,
-    qty, priceUsd:price, rate, fee, quote, order, date, ts:Date.now()};
+    qty, priceUsd:price, rate, fee, quote, order, date, ts:dtTs};
   const list=loadTx(); list.push(tx); saveTx(list);
+  const sideLabel = formSide==="AL"?"Alış":"Satış";
   // Kripto satışı: eline geçen USDT'yi nakit bakiyeye ekle (toplam düşmesin)
   let cashNote="";
   if(cat==="kripto" && formSide==="SAT"){
@@ -906,7 +946,7 @@ function saveForm(){
   }
   resetForm();
   renderAll();
-  toast((formSide==="AL"?"Alış":"Satış")+" kaydedildi ✓"+cashNote);
+  toast(sideLabel+" kaydedildi ✓"+cashNote);
   switchView("portfoy");
 }
 let editingId=null;
@@ -919,7 +959,11 @@ function resetForm(){
   editingId=null; setSide("AL");
   ["f-symbol","f-qty","f-price"].forEach(id=>document.getElementById(id).value="");
   document.getElementById("f-cat").value="kripto";
-  document.getElementById("f-date").value=todayStr();
+  document.getElementById("f-date").value=nowLocalDT();
+  document.getElementById("f-slider").value=0;
+  document.getElementById("f-slider-lbl").textContent="%0";
+  document.getElementById("f-holding").innerHTML="";
+  document.getElementById("f-slider-wrap").style.display="none";
   autoFillFee();
   document.getElementById("f-save").textContent="Kaydet";
   document.getElementById("f-cancel-edit").style.display="none";
@@ -950,7 +994,7 @@ function startEdit(id){
   document.getElementById("f-quote").value=t.quote||"usdt";
   document.getElementById("f-order").value=t.order||"taker";
   document.getElementById("f-fee").value=numIn(t.fee);
-  document.getElementById("f-date").value=t.date;
+  document.getElementById("f-date").value= t.ts? tsToLocalDT(t.ts) : ((t.date||todayStr())+"T00:00");
   document.getElementById("f-rate").value=numIn(t.rate);
   document.getElementById("f-save").textContent="Güncelle";
   document.getElementById("f-cancel-edit").style.display="block";
@@ -963,7 +1007,7 @@ const views=["portfoy","islemler","ekle","rapor"];
 function switchView(v){
   views.forEach(x=> document.getElementById("view-"+x).classList.toggle("hidden", x!==v));
   document.querySelectorAll("nav.tabs button").forEach(b=> b.classList.toggle("active", b.dataset.view===v));
-  if(v==="ekle") prefillRate();
+  if(v==="ekle"){ prefillRate(); updateHoldingInfo(); }
   const sub={portfoy:"Kripto · Hisse · Emtia", islemler:"Tüm işlemler", ekle:"Yeni alış / satış", rapor:"Aylık kâr / zarar"};
   document.getElementById("subtitle").textContent=sub[v]||"";
   window.scrollTo(0,0);
