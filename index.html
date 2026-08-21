@@ -233,7 +233,7 @@
           <input id="f-qty" type="text" inputmode="decimal" placeholder="0" />
         </div>
         <div>
-          <label>Fiyat (USD)</label>
+          <label id="f-price-label">Fiyat (USDT)</label>
           <input id="f-price" type="text" inputmode="decimal" placeholder="0,00" />
         </div>
       </div>
@@ -621,9 +621,9 @@ function renderPortfoy(){
     document.getElementById("tl-toUsdt").onclick=()=>{ if(!(rate>0)){ toast("Önce kur gerekli — Kur'a dokunup Yenile"); return; } const v=toNum(prompt("Kaç TL, USDT'ye çevrilecek? (kur "+fmt(rate,2)+")")); if(v>0){ saveCashTl(loadCashTl()-v); saveCash(loadCash()+v/rate); renderPortfoy(); toast(fmtTry(v)+" → "+fmtUsd(v/rate)); } };
   } else { cashEl.innerHTML=""; }
 
-  if(hs.length===0){ list.innerHTML='<div class="empty"><span class="em">📊</span>Henüz işlem yok.<br>Alt taraftaki <b>+</b> ile ilk alışını ekle.</div>'; return; }
+  if(!loadTx().length){ list.innerHTML='<div class="empty"><span class="em">📊</span>Henüz işlem yok.<br>Alt taraftaki <b>+</b> ile ilk alışını ekle.</div>'; return; }
 
-  list.innerHTML = hs.map(h=>{
+  const cardsHtml = hs.filter(h=>h.qty>1e-8).map(h=>{
     const open = h.qty>1e-9;
     const key=h.cat+"|"+h.symbol;
     const cp=prices[key];
@@ -673,6 +673,7 @@ function renderPortfoy(){
       '</details>':'')+
     '</div>';
   }).join("");
+  list.innerHTML = cardsHtml || '<div class="empty small muted" style="padding:26px">Bu görünümde açık pozisyon yok.<br>Kapanan işlemler <b>Rapor</b> sekmesinde durur.</div>';
 
   list.querySelectorAll(".cp-input").forEach(inp=>{
     inp.onchange=()=>{ savePrice(inp.dataset.key, toNum(inp.value)); setTimeout(renderPortfoy,0); };
@@ -863,6 +864,10 @@ function autoFillFee(){
   const v=fees[q] && fees[q][o];
   if(v!=null) document.getElementById("f-fee").value=fmt(v,2);
 }
+function updatePriceLabel(){
+  const q=document.getElementById("f-quote").value;
+  document.getElementById("f-price-label").textContent = q==="tl"? "Fiyat (TL)" : "Fiyat (USDT)";
+}
 function nowLocalDT(){ const d=new Date(); const o=d.getTimezoneOffset(); return new Date(d.getTime()-o*60000).toISOString().slice(0,16); }
 function tsToLocalDT(ts){ const d=new Date(ts); if(isNaN(d.getTime())) return nowLocalDT(); const o=d.getTimezoneOffset(); return new Date(d.getTime()-o*60000).toISOString().slice(0,16); }
 function currentHoldingQty(){
@@ -891,9 +896,9 @@ function initForm(){
   document.getElementById("f-symbol").oninput=()=>{ updateHoldingInfo(); };
   document.getElementById("f-slider").oninput=sliderToQty;
   document.querySelectorAll(".pctbtn").forEach(b=> b.onclick=()=>{ document.getElementById("f-slider").value=b.dataset.p; sliderToQty(); });
-  document.getElementById("f-quote").onchange=autoFillFee;
+  document.getElementById("f-quote").onchange=()=>{ autoFillFee(); updatePriceLabel(); };
   document.getElementById("f-order").onchange=autoFillFee;
-  autoFillFee();
+  autoFillFee(); updatePriceLabel();
   document.getElementById("f-rate-refresh").onclick = async ()=>{
     const r=await refreshRatePill();
     if(r){ document.getElementById("f-rate").value = fmt(r,2); toast("Kur güncellendi"); }
@@ -913,7 +918,7 @@ function saveForm(){
   const cat=document.getElementById("f-cat").value;
   const symbol=document.getElementById("f-symbol").value.trim().toUpperCase();
   const qty=toNum(document.getElementById("f-qty").value);
-  const price=toNum(document.getElementById("f-price").value);
+  const priceInput=toNum(document.getElementById("f-price").value);
   const dtVal=document.getElementById("f-date").value;
   const date = dtVal? dtVal.slice(0,10) : todayStr();
   const dtTs = dtVal? new Date(dtVal).getTime() : Date.now();
@@ -924,8 +929,10 @@ function saveForm(){
   if(isNaN(fee)||fee<0) fee=0;
   if(!symbol){ toast("Sembol girin (örn: CHZ)"); return; }
   if(!(qty>0)){ toast("Geçerli bir adet girin"); return; }
-  if(!(price>0)){ toast("Geçerli bir fiyat girin"); return; }
+  if(!(priceInput>0)){ toast("Geçerli bir fiyat girin"); return; }
   if(!(rate>0)){ toast("Dolar kuru gerekli — Yenile'ye basın veya elle girin"); return; }
+  // Fiyat, karşı paraya göre girildi: TL ise USD'ye çevir (iç hesap USD)
+  const price = quote==="tl"? priceInput/rate : priceInput;
   if(editingId){
     const list=loadTx();
     const i=list.findIndex(x=>String(x.id)===String(editingId));
@@ -990,8 +997,9 @@ function startEdit(id){
   setSide(t.side);
   document.getElementById("f-symbol").value=t.symbol;
   document.getElementById("f-qty").value=numIn(t.qty);
-  document.getElementById("f-price").value=numIn(t.priceUsd);
   document.getElementById("f-quote").value=t.quote||"usdt";
+  const pShow=(t.quote==="tl" && t.rate)? t.priceUsd*t.rate : t.priceUsd;
+  document.getElementById("f-price").value=numIn(pShow);
   document.getElementById("f-order").value=t.order||"taker";
   document.getElementById("f-fee").value=numIn(t.fee);
   document.getElementById("f-date").value= t.ts? tsToLocalDT(t.ts) : ((t.date||todayStr())+"T00:00");
@@ -1007,7 +1015,7 @@ const views=["portfoy","islemler","ekle","rapor"];
 function switchView(v){
   views.forEach(x=> document.getElementById("view-"+x).classList.toggle("hidden", x!==v));
   document.querySelectorAll("nav.tabs button").forEach(b=> b.classList.toggle("active", b.dataset.view===v));
-  if(v==="ekle"){ prefillRate(); updateHoldingInfo(); }
+  if(v==="ekle"){ prefillRate(); updateHoldingInfo(); updatePriceLabel(); }
   const sub={portfoy:"Kripto · Hisse · Emtia", islemler:"Tüm işlemler", ekle:"Yeni alış / satış", rapor:"Aylık kâr / zarar"};
   document.getElementById("subtitle").textContent=sub[v]||"";
   window.scrollTo(0,0);
