@@ -648,8 +648,6 @@ function renderPortfoy(){
         (open? '<div class="kv"><div class="k">Maliyet (USD)</div><div class="v">'+fmtUsd(h.qty*h.avgUsd)+'</div></div>':'')+
         (hasCp? '<div class="kv"><div class="k">Güncel Değer (USD)</div><div class="v">'+fmtUsd(curVal)+'</div></div>':'')+
         (hasCp? '<div class="kv"><div class="k">Anlık K/Z (USD)</div><div class="v '+cls(upl)+'">'+sign(upl)+fmtUsd(upl)+' <span class="small">('+sign(uplPct)+fmt(uplPct,1)+'%)</span></div></div>':'')+
-        (h.soldQty>0? '<div class="kv"><div class="k">Ortalama Satış (USD)</div><div class="v">'+fmtPriceUsd(h.avgSellUsd)+'</div></div>':'')+
-        (h.soldQty>0? '<div class="kv"><div class="k">Gerçekleşen K/Z</div><div class="v '+cls(h.realUsd)+'">'+sign(h.realUsd)+fmtUsd(h.realUsd)+'</div></div>':'')+
         '<div class="kv"><div class="k">Ort. Maliyet (TL)</div><div class="v">'+fmtPriceTry(h.avgTry)+'</div></div>'+
         (open? '<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
       '</div>'+
