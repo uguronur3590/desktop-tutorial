@@ -284,6 +284,16 @@
     <h2 class="section">Aylık Gerçekleşen Kâr/Zarar</h2>
     <div id="rp-list"></div>
   </section>
+
+  <!-- TARİHÇE -->
+  <section id="view-tarihce" class="hidden">
+    <div class="chips" id="th-chips"></div>
+    <div id="th-fee"></div>
+    <h2 class="section">Dönemsel Kâr — Tarih Aralığı</h2>
+    <div class="chips" id="th-period"></div>
+    <div id="th-profit"></div>
+    <div id="th-list"></div>
+  </section>
 </main>
 
 <nav class="tabs">
@@ -291,7 +301,7 @@
   <button data-view="islemler"><span class="ic">📋</span>İşlemler</button>
   <button data-view="ekle" class="addbtn"><span class="ic">+</span></button>
   <button data-view="rapor"><span class="ic">📅</span>Rapor</button>
-  <button data-view="ayarlar-fake" style="visibility:hidden"></button>
+  <button data-view="tarihce"><span class="ic">🧾</span>Tarihçe</button>
 </nav>
 
 <div id="toast" class="toast"></div>
@@ -851,7 +861,107 @@ function renderRapor(){
     '</tbody></table></div>';
 }
 
-function renderAll(){ renderPortfoy(); renderIslemler(); renderRapor(); }
+/* ============ Tarihçe (komisyon + dönemsel kâr) ============ */
+// Ödenen toplam komisyon (her işlemden türetilir → işlem silinince otomatik düşer)
+function feeTotals(txs){
+  let usd=0, tryT=0, count=0;
+  txs.forEach(t=>{
+    const f=(t.fee||0)/100;
+    if(f>0){ const fu=t.priceUsd*t.qty*f; usd+=fu; tryT+=fu*(t.rate||0); count++; }
+  });
+  return {usd, tryT, count};
+}
+// Her satışı, o andaki ortalama maliyete göre gerçekleşen K/Z + maliyet tabanıyla döndürür
+function sellEvents(txs){
+  const groups={};
+  txs.forEach(t=>{ const k=t.cat+"|"+t.symbol; (groups[k]=groups[k]||[]).push(t); });
+  const sells=[];
+  for(const k in groups){
+    const list=groups[k].slice().sort((a,b)=>(a.date+String(a.ts)).localeCompare(b.date+String(b.ts)));
+    let qty=0, avgUsd=0, avgTry=0;
+    const [cat,symbol]=k.split("|");
+    for(const t of list){
+      const p=t.priceUsd, r=t.rate||0, q=t.qty, f=(t.fee||0)/100;
+      if(t.side==="AL"){
+        const effU=p*(1+f), nq=qty+q;
+        if(nq>0){ avgUsd=(avgUsd*qty+effU*q)/nq; avgTry=(avgTry*qty+effU*r*q)/nq; }
+        qty=nq;
+      }else{
+        const effU=p*(1-f);
+        const pu=(effU-avgUsd)*q, pt=(effU*r-avgTry)*q, costUsd=avgUsd*q;
+        sells.push({ts: t.ts||Date.parse(t.date), date:t.date, cat, symbol, qty:q, priceUsd:p, realUsd:pu, realTry:pt, costUsd});
+        qty-=q;
+      }
+    }
+  }
+  return sells.sort((a,b)=> b.ts-a.ts);
+}
+
+let thFilter="hepsi", thPeriod="ay";
+const TH_PERIODS=[["hafta","Son 1 Hafta",7],["ay","Son 1 Ay",30],["yil","Son 1 Yıl",365],["tumu","Tümü",null]];
+function renderTarihce(){
+  chipBar("th-chips", thFilter, v=>{thFilter=v; renderTarihce();});
+  const txs=loadTx().filter(t=> thFilter==="hepsi"|| t.cat===thFilter);
+
+  // Komisyon toplamı (bugüne kadar)
+  const ft=feeTotals(txs);
+  document.getElementById("th-fee").innerHTML=
+    '<div class="totalbar">'+
+      '<div class="lbl">Bugüne Kadar Ödenen Komisyon</div>'+
+      '<div class="amt">'+fmtUsd(ft.usd)+'</div>'+
+      '<div class="sub">'+fmtTry(ft.tryT)+' · '+ft.count+' işlemde</div>'+
+    '</div>';
+
+  // Dönem seçici
+  const pc=document.getElementById("th-period"); pc.innerHTML="";
+  TH_PERIODS.forEach(([v,label])=>{
+    const b=document.createElement("button");
+    b.className="chip"+(thPeriod===v?" active":""); b.textContent=label;
+    b.onclick=()=>{ thPeriod=v; renderTarihce(); };
+    pc.appendChild(b);
+  });
+  const days=(TH_PERIODS.find(p=>p[0]===thPeriod)||[])[2];
+  const cutoff = (days==null)? null : Date.now()-days*864e5;
+
+  const allSells=sellEvents(txs);
+  const sells=allSells.filter(s=> cutoff==null || s.ts>=cutoff);
+  const realUsd=sells.reduce((a,s)=>a+s.realUsd,0);
+  const realTry=sells.reduce((a,s)=>a+s.realTry,0);
+  const cost=sells.reduce((a,s)=>a+s.costUsd,0);
+  const pct=cost>0? realUsd/cost*100 : 0;
+  const periodTx=txs.filter(t=> cutoff==null || (t.ts||Date.parse(t.date))>=cutoff);
+  const ftP=feeTotals(periodTx);
+
+  document.getElementById("th-profit").innerHTML=
+    '<div class="totalbar">'+
+      '<div class="lbl">Gerçekleşen Kâr/Zarar (seçilen dönem)</div>'+
+      '<div class="amt '+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</div>'+
+      '<div class="sub '+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</div>'+
+      '<div class="row" style="margin-top:12px">'+
+        '<div><div class="lbl">Getiri (%)</div><div class="big '+cls(pct)+'">'+(cost>0? sign(pct)+fmt(pct,1)+'%' : '—')+'</div></div>'+
+        '<div style="text-align:right"><div class="lbl">Satış işlemi</div><div class="big">'+sells.length+'</div></div>'+
+      '</div>'+
+      '<div class="sub" style="margin-top:10px">Bu dönem ödenen komisyon: '+fmtUsd(ftP.usd)+'</div>'+
+    '</div>';
+
+  const list=document.getElementById("th-list");
+  if(!sells.length){
+    list.innerHTML='<div class="empty small muted" style="padding:26px">Bu dönemde satış (gerçekleşen K/Z) yok.<br>Başka bir tarih aralığı seçin.</div>';
+    return;
+  }
+  list.innerHTML='<div class="card"><div class="row" style="margin-bottom:6px"><b>Satış Dökümü</b><span class="small muted">'+sells.length+' işlem</span></div>'+
+    sells.map(s=>{
+      const p=s.costUsd>0? (s.realUsd/s.costUsd*100) : 0;
+      return '<div class="txitem">'+
+        '<div><span class="sym">'+s.symbol+'</span> <span class="tag '+s.cat+'">'+CATS[s.cat]+'</span>'+
+          '<div class="small muted">'+dFull(s.date)+' · '+fmt(s.qty,4)+' adet @ '+fmtPriceUsd(s.priceUsd)+'</div></div>'+
+        '<div style="text-align:right"><div class="v '+cls(s.realUsd)+'">'+sign(s.realUsd)+fmtUsd(s.realUsd)+'</div>'+
+          '<div class="small '+cls(p)+'">'+sign(p)+fmt(p,1)+'%</div></div>'+
+      '</div>';
+    }).join("")+'</div>';
+}
+
+function renderAll(){ renderPortfoy(); renderIslemler(); renderRapor(); renderTarihce(); }
 
 /* ============ Form ============ */
 let formSide="AL";
@@ -1015,12 +1125,12 @@ function startEdit(id){
 }
 
 /* ============ Sekmeler ============ */
-const views=["portfoy","islemler","ekle","rapor"];
+const views=["portfoy","islemler","ekle","rapor","tarihce"];
 function switchView(v){
   views.forEach(x=> document.getElementById("view-"+x).classList.toggle("hidden", x!==v));
   document.querySelectorAll("nav.tabs button").forEach(b=> b.classList.toggle("active", b.dataset.view===v));
   if(v==="ekle"){ prefillRate(); updateHoldingInfo(); updatePriceLabel(); }
-  const sub={portfoy:"Kripto · Hisse · Emtia", islemler:"Tüm işlemler", ekle:"Yeni alış / satış", rapor:"Aylık kâr / zarar"};
+  const sub={portfoy:"Kripto · Hisse · Emtia", islemler:"Tüm işlemler", ekle:"Yeni alış / satış", rapor:"Aylık kâr / zarar", tarihce:"Komisyon · dönemsel kâr"};
   document.getElementById("subtitle").textContent=sub[v]||"";
   window.scrollTo(0,0);
 }
