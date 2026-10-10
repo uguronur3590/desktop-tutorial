@@ -424,15 +424,16 @@ function hisseHoldingsTl(holdings){
   (holdings||[]).forEach(h=>{ if(h.cat==="hisse" && h.qty>1e-9){ const cp=pt[h.cat+"|"+h.symbol]; val += h.qty*((cp>0)? cp : h.avgTry); } });
   return val;
 }
-// "Param faizde olsaydı" — her giriş, girildiği günden bugüne GÜNLÜK faizle (aylık/30) büyür
+// "Param faizde olsaydı" — her giriş, girildiği günden bugüne GÜNLÜK faizle büyür.
+// Oranlar YILLIK brüt (%); günlük faiz = yıllık/365, günlük bileşik.
 function benchmarkTl(asOf){
   const end=new Date(asOf); end.setHours(0,0,0,0);
   let total=0;
   loadLedger().forEach(e=>{
     let factor=1, d=new Date(e.ts); d.setHours(0,0,0,0); let guard=0;
     while(d.getTime()<end.getTime() && guard<4000){
-      const mr=rateForMonth(ymStr(d.getTime()));
-      factor *= (1 + (mr!=null? mr/100/30 : 0));
+      const yr=rateForMonth(ymStr(d.getTime()));
+      factor *= (1 + (yr!=null? yr/100/365 : 0));
       d=new Date(d.getTime()+864e5); guard++;
     }
     total += (+e.amount||0)*factor;
@@ -639,13 +640,13 @@ function renderHisseDash(d){
     '</div>'+
     (netDepTl>1e-9
       ? '<div class="sub" style="margin-top:10px">Alım-satım, faize göre <span class="'+cls(adv)+'">'+sign(adv)+fmtTry(adv)+'</span> '+(adv>=0?'daha iyi ✅':'daha kötü ⚠️')+'</div>'
-      : '<div class="sub" style="margin-top:10px">Kıyas için önce <b>Para Girişi</b> ve <b>aylık faiz</b> gir.</div>');
+      : '<div class="sub" style="margin-top:10px">Kıyas için önce <b>Para Girişi</b> ve <b>faiz oranı</b> gir.</div>');
 
   const ym=ymStr(Date.now()); const curR=loadIRates()[ym];
   const led=loadLedger().slice().sort((a,b)=>b.ts-a.ts);
   document.getElementById("pf-cash").innerHTML=
     '<div class="card"><div class="row">'+
-      '<div><b>📈 Aylık Faiz — '+monthName(ym)+'</b><div class="small muted">Mevduat/para piyasası aylık faiz oranı</div></div>'+
+      '<div><b>📈 Faiz — '+monthName(ym)+'</b><div class="small muted">Yıllık brüt mevduat faizi (örn. %26,75)</div></div>'+
       '<div class="big '+(curR==null?'neg':'')+'">'+(curR!=null? '%'+fmt(curR,2):'— gir')+'</div></div>'+
       '<div class="btnrow" style="margin-top:10px"><button class="btn ghost" id="faiz-set">'+(curR!=null?'Bu ayı düzenle':'Bu ayın faizini gir')+'</button>'+
       '<button class="btn ghost" id="faiz-hist">Diğer aylar</button></div>'+
@@ -693,7 +694,7 @@ function renderHisseDash(d){
 }
 function askFaiz(ym){
   const r=loadIRates(); const cur=r[ym];
-  const s=prompt(monthName(ym)+" için AYLIK faiz oranı (% olarak, örn. 4 = aylık %4):", cur!=null? String(cur).replace(".",","):"");
+  const s=prompt(monthName(ym)+" için YILLIK brüt faiz oranı (% olarak, örn. 26,75):", cur!=null? String(cur).replace(".",","):"");
   if(s==null) return; const v=toNum(s);
   if(isNaN(v)||v<0){ toast("Geçerli bir oran gir"); return; }
   r[ym]=v; saveIRates(r); renderPortfoy(); toast(monthName(ym)+" faizi: %"+fmt(v,2));
