@@ -318,7 +318,11 @@
       <div class="full">TL çifti</div>
       <div><label>Piyasa yapıcı (%)</label><input id="s-tl-maker" type="text" inputmode="decimal"></div>
       <div><label>Piyasa alıcı (%)</label><input id="s-tl-taker" type="text" inputmode="decimal"></div>
+      <div class="full">Hisse (BIST)</div>
+      <div><label>Satış stopajı (%)</label><input id="s-stopaj" type="text" inputmode="decimal"></div>
+      <div></div>
     </div>
+    <div class="hint" style="margin-top:6px">BIST'te gerçek kişilerin normal hisse (örn. PETKM) alım-satım kazancında stopaj güncel olarak <b>%0</b>'dır. Menkul kıymet yatırım ortaklığı (MKYO) payları ve bazı fonlar istisnadır (ör. %10). Stopaj yalnızca <b>kârlı hisse satışına</b> uygulanır; alışta ve zararlı satışta uygulanmaz.</div>
     <button class="btn" id="s-save">Komisyonu Kaydet</button>
 
     <hr class="sep">
@@ -355,7 +359,7 @@ const LS_PRICES = "portfoy_prices_v1";
 const LS_CASH = "portfoy_cash_v2";
 const LS_CASH_TL = "portfoy_cash_tl_v1";
 const CATS = {kripto:"Kripto", hisse:"Hisse", emtia:"Emtia"};
-const DEFAULT_FEES = {usdt:{maker:0.01, taker:0.1}, tl:{maker:0.12, taker:0.28}};
+const DEFAULT_FEES = {usdt:{maker:0.01, taker:0.1}, tl:{maker:0.12, taker:0.28}, stopaj:0};
 
 function loadTx(){ try{ return JSON.parse(localStorage.getItem(LS_TX)) || []; }catch(e){ return []; } }
 function saveTx(list){ localStorage.setItem(LS_TX, JSON.stringify(list)); }
@@ -365,7 +369,8 @@ function loadFees(){
     if(!f) return JSON.parse(JSON.stringify(DEFAULT_FEES));
     return {
       usdt:{maker: f.usdt?.maker ?? DEFAULT_FEES.usdt.maker, taker: f.usdt?.taker ?? DEFAULT_FEES.usdt.taker},
-      tl:{maker: f.tl?.maker ?? DEFAULT_FEES.tl.maker, taker: f.tl?.taker ?? DEFAULT_FEES.tl.taker}
+      tl:{maker: f.tl?.maker ?? DEFAULT_FEES.tl.maker, taker: f.tl?.taker ?? DEFAULT_FEES.tl.taker},
+      stopaj: (typeof f.stopaj==="number" && f.stopaj>=0)? f.stopaj : 0
     };
   }catch(e){ return JSON.parse(JSON.stringify(DEFAULT_FEES)); }
 }
@@ -468,11 +473,12 @@ function analyze(txs){
   const groups = {};
   txs.forEach(t=>{ const k=t.cat+"|"+t.symbol; (groups[k]=groups[k]||[]).push(t); });
   const holdings=[]; const monthly={}; // ym -> {usd,try,count}
+  const STOPAJ=loadFees().stopaj||0;   // BIST hisse satış stopajı (%)
   for(const k in groups){
     const list = groups[k].slice().sort((a,b)=> (a.date+String(a.ts)).localeCompare(b.date+String(b.ts)));
     let qty=0, avgUsd=0, avgTry=0;
     let boughtQty=0, soldQty=0, sellUsdSum=0;
-    let realUsd=0, realTry=0, feeUsdTot=0, feeTryTot=0;
+    let realUsd=0, realTry=0, feeUsdTot=0, feeTryTot=0, stopajUsdTot=0, stopajTryTot=0;
     for(const t of list){
       const p=t.priceUsd, r=t.rate||0, q=t.qty, f=(t.fee||0)/100;
       const feeUsd=p*q*f, feeTry=feeUsd*r;
@@ -484,7 +490,12 @@ function analyze(txs){
         qty=nq; boughtQty+=q;
       }else{
         const effU=p*(1-f);            // komisyon düşülmüş birim satış (USD)
-        const pu=(effU-avgUsd)*q; const pt=(effU*r-avgTry)*q;
+        let pu=(effU-avgUsd)*q, pt=(effU*r-avgTry)*q;
+        // BIST hisse: pozitif kazanca stopaj (zararlı satışta stopaj yok)
+        if(t.cat==="hisse" && STOPAJ>0 && pt>0){
+          const sTry=pt*STOPAJ/100, sUsd=(r>0? sTry/r : pu*STOPAJ/100);
+          pt-=sTry; pu-=sUsd; stopajTryTot+=sTry; stopajUsdTot+=sUsd;
+        }
         realUsd+=pu; realTry+=pt; qty-=q; soldQty+=q; sellUsdSum+=effU*q;
         const ym=t.date.slice(0,7);
         const m=monthly[ym]=monthly[ym]||{usd:0,try:0,count:0};
@@ -493,7 +504,8 @@ function analyze(txs){
     }
     const [cat,symbol]=k.split("|");
     holdings.push({cat,symbol,qty,avgUsd,avgTry,boughtQty,soldQty,
-      avgSellUsd: soldQty>0? sellUsdSum/soldQty : 0, realUsd, realTry, feeUsd:feeUsdTot, feeTry:feeTryTot});
+      avgSellUsd: soldQty>0? sellUsdSum/soldQty : 0, realUsd, realTry,
+      feeUsd:feeUsdTot, feeTry:feeTryTot, stopajUsd:stopajUsdTot, stopajTry:stopajTryTot});
   }
   holdings.sort((a,b)=> a.symbol.localeCompare(b.symbol));
   const months = Object.keys(monthly).sort().reverse().map(ym=>({ym, ...monthly[ym]}));
@@ -875,6 +887,7 @@ function feeTotals(txs){
 function sellEvents(txs){
   const groups={};
   txs.forEach(t=>{ const k=t.cat+"|"+t.symbol; (groups[k]=groups[k]||[]).push(t); });
+  const STOPAJ=loadFees().stopaj||0;
   const sells=[];
   for(const k in groups){
     const list=groups[k].slice().sort((a,b)=>(a.date+String(a.ts)).localeCompare(b.date+String(b.ts)));
@@ -888,8 +901,10 @@ function sellEvents(txs){
         qty=nq;
       }else{
         const effU=p*(1-f);
-        const pu=(effU-avgUsd)*q, pt=(effU*r-avgTry)*q, costUsd=avgUsd*q;
-        sells.push({ts: t.ts||Date.parse(t.date), date:t.date, cat, symbol, qty:q, priceUsd:p, realUsd:pu, realTry:pt, costUsd});
+        let pu=(effU-avgUsd)*q, pt=(effU*r-avgTry)*q; const costUsd=avgUsd*q, costTry=avgTry*q;
+        let sTry=0;
+        if(cat==="hisse" && STOPAJ>0 && pt>0){ sTry=pt*STOPAJ/100; const sUsd=(r>0? sTry/r : pu*STOPAJ/100); pt-=sTry; pu-=sUsd; }
+        sells.push({ts: t.ts||Date.parse(t.date), date:t.date, cat, symbol, qty:q, priceUsd:p, realUsd:pu, realTry:pt, costUsd, costTry, stopajTry:sTry});
         qty-=q;
       }
     }
@@ -929,19 +944,21 @@ function renderTarihce(){
   const realTry=sells.reduce((a,s)=>a+s.realTry,0);
   const cost=sells.reduce((a,s)=>a+s.costUsd,0);
   const pct=cost>0? realUsd/cost*100 : 0;
+  const stopajTry=sells.reduce((a,s)=>a+(s.stopajTry||0),0);
   const periodTx=txs.filter(t=> cutoff==null || (t.ts||Date.parse(t.date))>=cutoff);
   const ftP=feeTotals(periodTx);
 
   document.getElementById("th-profit").innerHTML=
     '<div class="totalbar">'+
-      '<div class="lbl">Gerçekleşen Kâr/Zarar (seçilen dönem)</div>'+
+      '<div class="lbl">Gerçekleşen Kâr/Zarar (seçilen dönem · net)</div>'+
       '<div class="amt '+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</div>'+
       '<div class="sub '+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</div>'+
       '<div class="row" style="margin-top:12px">'+
         '<div><div class="lbl">Getiri (%)</div><div class="big '+cls(pct)+'">'+(cost>0? sign(pct)+fmt(pct,1)+'%' : '—')+'</div></div>'+
         '<div style="text-align:right"><div class="lbl">Satış işlemi</div><div class="big">'+sells.length+'</div></div>'+
       '</div>'+
-      '<div class="sub" style="margin-top:10px">Bu dönem ödenen komisyon: '+fmtUsd(ftP.usd)+'</div>'+
+      '<div class="sub" style="margin-top:10px">Bu dönem ödenen komisyon: '+fmtUsd(ftP.usd)+
+        (stopajTry>0? ' · stopaj: '+fmtTry(stopajTry) : '')+'</div>'+
     '</div>';
 
   const list=document.getElementById("th-list");
@@ -966,6 +983,8 @@ function renderAll(){ renderPortfoy(); renderIslemler(); renderRapor(); renderTa
 /* ============ Form ============ */
 let formSide="AL";
 function autoFillFee(){
+  const cat=document.getElementById("f-cat").value;
+  if(cat==="hisse"){ document.getElementById("f-fee").value="0"; return; } // BIST komisyonsuz
   const fees=loadFees();
   const q=document.getElementById("f-quote").value;
   const o=document.getElementById("f-order").value;
@@ -1000,7 +1019,11 @@ function updateHoldingInfo(){
 function initForm(){
   document.getElementById("f-date").value = nowLocalDT();
   document.querySelectorAll("#f-side button").forEach(b=> b.onclick=()=>{ setSide(b.dataset.side); updateHoldingInfo(); });
-  document.getElementById("f-cat").onchange=()=>{ updateHoldingInfo(); };
+  document.getElementById("f-cat").onchange=()=>{
+    // Hisse (BIST) TL ile ve komisyonsuz → karşı parayı TL yap
+    if(document.getElementById("f-cat").value==="hisse"){ document.getElementById("f-quote").value="tl"; }
+    autoFillFee(); updatePriceLabel(); updateHoldingInfo();
+  };
   document.getElementById("f-symbol").oninput=()=>{ updateHoldingInfo(); };
   document.getElementById("f-slider").oninput=sliderToQty;
   document.querySelectorAll(".pctbtn").forEach(b=> b.onclick=()=>{ document.getElementById("f-slider").value=b.dataset.p; sliderToQty(); });
@@ -1064,6 +1087,11 @@ function saveForm(){
       if(quote==="tl"){ saveCashTl(loadCashTl()+proceeds*(rate||1)); cashNote=" · TL kasaya +"+fmtTry(proceeds*(rate||1)); }
       else { saveCash(loadCash()+proceeds); cashNote=" · USDT kasaya +"+fmtUsd(proceeds); }
     }
+  } else if(cat==="hisse"){
+    // BIST hisse TL ile (komisyonsuz): alış TL kasadan düşer, satış TL kasaya girer
+    const amtTl = (quote==="tl"? priceInput : price*rate) * qty;
+    if(formSide==="AL"){ saveCashTl(loadCashTl()-amtTl); cashNote=" · TL kasadan −"+fmtTry(amtTl); }
+    else { saveCashTl(loadCashTl()+amtTl); cashNote=" · TL kasaya +"+fmtTry(amtTl); }
   }
   resetForm();
   renderAll();
@@ -1147,6 +1175,7 @@ function openSettings(){
   document.getElementById("s-usdt-taker").value=fmt(f.usdt.taker,2);
   document.getElementById("s-tl-maker").value=fmt(f.tl.maker,2);
   document.getElementById("s-tl-taker").value=fmt(f.tl.taker,2);
+  document.getElementById("s-stopaj").value=fmt(f.stopaj,2);
   document.getElementById("b-export").value=exportData();
   document.getElementById("b-import").value="";
   document.getElementById("settingsOverlay").classList.remove("hidden");
@@ -1222,9 +1251,10 @@ document.getElementById("s-save").onclick=()=>{
   const g=id=>{ const v=toNum(document.getElementById(id).value); return (isNaN(v)||v<0)?0:v; };
   saveFees({
     usdt:{maker:g("s-usdt-maker"), taker:g("s-usdt-taker")},
-    tl:{maker:g("s-tl-maker"), taker:g("s-tl-taker")}
+    tl:{maker:g("s-tl-maker"), taker:g("s-tl-taker")},
+    stopaj:g("s-stopaj")
   });
-  autoFillFee(); renderAll(); toast("Komisyon oranları kaydedildi ✓");
+  autoFillFee(); renderAll(); toast("Ayarlar kaydedildi ✓");
 };
 document.getElementById("b-copy").onclick=async ()=>{
   const ok=await copyText(document.getElementById("b-export").value);

@@ -1,5 +1,5 @@
 // Service Worker — güncel içeriği ÖNCE ağdan alır (network-first), çevrimdışıysa önbellekten.
-const CACHE = "portfoy-takip-v4";
+const CACHE = "portfoy-takip-v5";
 const ASSETS = [
   "./",
   "./index.html",
