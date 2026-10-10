@@ -386,6 +386,60 @@ function loadCashTl(){ const v=parseFloat(localStorage.getItem(LS_CASH_TL)); ret
 function saveCashTl(v){ localStorage.setItem(LS_CASH_TL, String(v)); }
 function usableRate(){ if(currentRate>0) return currentRate; const c=cachedRate(); return (c&&c.rate>0)? c.rate : 0; }
 
+/* ===== Hisse (BIST) TL hesabı: para giriş defteri + aylık faiz + güncel TL fiyat ===== */
+const LS_HLEDGER="portfoy_hisse_ledger_v1"; // [{id, ts, date, amount}] (+ giriş / − çıkış, TL)
+const LS_IRATES="portfoy_faiz_v1";          // {"YYYY-MM": aylıkFaiz%}
+const LS_PRICES_TL="portfoy_prices_tl_v1";  // {"hisse|SYM": güncelTLfiyat}
+function loadLedger(){ try{ return JSON.parse(localStorage.getItem(LS_HLEDGER))||[]; }catch(e){ return []; } }
+function saveLedger(l){ localStorage.setItem(LS_HLEDGER, JSON.stringify(l)); }
+function loadIRates(){ try{ return JSON.parse(localStorage.getItem(LS_IRATES))||{}; }catch(e){ return {}; } }
+function saveIRates(o){ localStorage.setItem(LS_IRATES, JSON.stringify(o)); }
+function loadPricesTl(){ try{ return JSON.parse(localStorage.getItem(LS_PRICES_TL))||{}; }catch(e){ return {}; } }
+function savePriceTl(key,val){ const p=loadPricesTl(); if(val>0) p[key]=val; else delete p[key]; localStorage.setItem(LS_PRICES_TL, JSON.stringify(p)); }
+function ymStr(ts){ const d=new Date(ts); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function ymName(ym){ return monthName(ym); }
+// Bir ay için faiz: tam o ay yoksa, o aydan önceki en son bilinen oranı kullan (yoksa en erken; hiç yoksa null)
+function rateForMonth(ym){
+  const r=loadIRates(); if(r[ym]!=null) return r[ym];
+  const keys=Object.keys(r).sort(); let best=null;
+  for(const k of keys){ if(k<=ym) best=r[k]; }
+  if(best!=null) return best;
+  return keys.length? r[keys[0]] : null;
+}
+// Hisse işlemlerinden TL nakit akışı (satış girer, alış çıkar — brüt, stopaj hariç)
+function hisseFlowTl(txs){
+  let flow=0;
+  txs.forEach(t=>{ if(t.cat!=="hisse") return; const priceTl=t.priceUsd*(t.rate||0); const amt=priceTl*t.qty; flow += (t.side==="SAT"? amt : -amt); });
+  return flow;
+}
+// Hisse nakdi (TL) = para girişleri + işlem akışı − toplam stopaj
+function hisseCashTl(txs, holdings){
+  const dep=loadLedger().reduce((a,e)=>a+(+e.amount||0),0);
+  const stopaj=(holdings||[]).filter(h=>h.cat==="hisse").reduce((a,h)=>a+(h.stopajTry||0),0);
+  return dep + hisseFlowTl(txs) - stopaj;
+}
+// Açık hisse pozisyonlarının güncel TL değeri (fiyat yoksa maliyetten değerlenir)
+function hisseHoldingsTl(holdings){
+  const pt=loadPricesTl(); let val=0;
+  (holdings||[]).forEach(h=>{ if(h.cat==="hisse" && h.qty>1e-9){ const cp=pt[h.cat+"|"+h.symbol]; val += h.qty*((cp>0)? cp : h.avgTry); } });
+  return val;
+}
+// "Param faizde olsaydı" — her giriş, girildiği günden bugüne GÜNLÜK faizle (aylık/30) büyür
+function benchmarkTl(asOf){
+  const end=new Date(asOf); end.setHours(0,0,0,0);
+  let total=0;
+  loadLedger().forEach(e=>{
+    let factor=1, d=new Date(e.ts); d.setHours(0,0,0,0); let guard=0;
+    while(d.getTime()<end.getTime() && guard<4000){
+      const mr=rateForMonth(ymStr(d.getTime()));
+      factor *= (1 + (mr!=null? mr/100/30 : 0));
+      d=new Date(d.getTime()+864e5); guard++;
+    }
+    total += (+e.amount||0)*factor;
+  });
+  return total;
+}
+
 // Canlı kripto fiyatları (Binance USDT paritesi). silent=true → bildirim yok (açılışta).
 async function fetchLivePrices(silent){
   const holdings = analyze(loadTx()).holdings.filter(h=> h.cat==="kripto" && h.qty>1e-9);
@@ -565,13 +619,124 @@ function updateSellCalc(d){
   out.innerHTML=s;
 }
 
+/* ===== Hisse (BIST) TL paneli: faiz kıyası + para girişleri + TL kartlar ===== */
+let _faizAskedSession=false;
+function renderHisseDash(d){
+  const {holdings,rate,hCashTl,hHoldTl,hTotalTl,netDepTl,benchTl}=d;
+  const tradeProfit=hTotalTl-netDepTl;     // gerçekte (kazançla) kazanç
+  const interestProfit=benchTl-netDepTl;   // faizde olsaydı kazanç
+  const adv=tradeProfit-interestProfit;
+  const pctOf=x=> netDepTl>1e-9? (sign(x)+fmt(x/netDepTl*100,1)+'%') : '';
+  const usdLine = rate>0? ' · ≈ '+fmtUsd(hTotalTl/rate)+' (gün sonu USD)' : '';
+
+  document.getElementById("pf-total").innerHTML=
+    '<div class="lbl">Hisse Hesabı — Toplam (TL)</div>'+
+    '<div class="amt">'+fmtTry(hTotalTl)+'</div>'+
+    '<div class="sub">Hisse '+fmtTry(hHoldTl)+' · Nakit '+fmtTry(hCashTl)+usdLine+'</div>'+
+    '<div class="row" style="margin-top:12px">'+
+      '<div><div class="lbl">Kazançla (gerçek)</div><div class="big '+cls(tradeProfit)+'">'+sign(tradeProfit)+fmtTry(tradeProfit)+'</div><div class="small '+cls(tradeProfit)+'">'+pctOf(tradeProfit)+'</div></div>'+
+      '<div style="text-align:right"><div class="lbl">Faizde olsaydı</div><div class="big '+cls(interestProfit)+'">'+sign(interestProfit)+fmtTry(interestProfit)+'</div><div class="small '+cls(interestProfit)+'">'+pctOf(interestProfit)+'</div></div>'+
+    '</div>'+
+    (netDepTl>1e-9
+      ? '<div class="sub" style="margin-top:10px">Alım-satım, faize göre <span class="'+cls(adv)+'">'+sign(adv)+fmtTry(adv)+'</span> '+(adv>=0?'daha iyi ✅':'daha kötü ⚠️')+'</div>'
+      : '<div class="sub" style="margin-top:10px">Kıyas için önce <b>Para Girişi</b> ve <b>aylık faiz</b> gir.</div>');
+
+  const ym=ymStr(Date.now()); const curR=loadIRates()[ym];
+  const led=loadLedger().slice().sort((a,b)=>b.ts-a.ts);
+  document.getElementById("pf-cash").innerHTML=
+    '<div class="card"><div class="row">'+
+      '<div><b>📈 Aylık Faiz — '+monthName(ym)+'</b><div class="small muted">Mevduat/para piyasası aylık faiz oranı</div></div>'+
+      '<div class="big '+(curR==null?'neg':'')+'">'+(curR!=null? '%'+fmt(curR,2):'— gir')+'</div></div>'+
+      '<div class="btnrow" style="margin-top:10px"><button class="btn ghost" id="faiz-set">'+(curR!=null?'Bu ayı düzenle':'Bu ayın faizini gir')+'</button>'+
+      '<button class="btn ghost" id="faiz-hist">Diğer aylar</button></div>'+
+    '</div>'+
+    '<div class="card"><div class="row" style="margin-bottom:6px"><b>💰 Para Girişleri (TL)</b><span class="small muted">Net: '+fmtTry(netDepTl)+'</span></div>'+
+      (led.length? led.map(e=>'<div class="txitem"><div><span class="'+(e.amount>=0?'side-al':'side-sat')+'">'+(e.amount>=0?'GİRİŞ':'ÇIKIŞ')+'</span> <span class="small muted">'+dFull(e.date)+'</span></div><div style="text-align:right"><div class="v">'+(e.amount>=0?'+':'')+fmtTry(e.amount)+'</div></div><button class="del ledger-del" data-id="'+e.id+'">✕</button></div>').join('') : '<div class="small muted" style="padding:8px 0">Henüz giriş yok. Borsaya aktardığın TL\'yi “Para Girişi” ile ekle.</div>')+
+      '<div class="btnrow" style="margin-top:10px"><button class="btn ghost" id="led-dep">＋ Para Girişi</button><button class="btn ghost" id="led-wd">－ Para Çıkışı</button></div>'+
+    '</div>';
+
+  const pt=loadPricesTl();
+  const hs=holdings.filter(h=>h.cat==="hisse" && h.qty>1e-8);
+  const cards=hs.map(h=>{
+    const key=h.cat+"|"+h.symbol, open=h.qty>1e-9;
+    const cp=pt[key]||0, hasCp=open&&cp>0;
+    const curVal=hasCp? h.qty*cp : 0;
+    const upl=hasCp? (cp-h.avgTry)*h.qty : 0;
+    const uplPct=hasCp && h.avgTry>0? ((cp/h.avgTry-1)*100):0;
+    return '<div class="card">'+
+      '<div class="row"><div><span class="sym big">'+h.symbol+'</span> <span class="tag hisse">Hisse</span></div>'+
+        '<div style="text-align:right">'+(open?'<div class="v big">'+fmt(h.qty,0)+' <span class="small muted">adet</span></div>':'<div class="small muted">Pozisyon kapalı</div>')+'</div></div>'+
+      '<div class="btnrow" style="margin-top:10px">'+
+        '<button class="btn trade-btn" style="background:rgba(38,208,124,.15);color:var(--green);margin-top:0" data-trade="AL" data-key="'+key+'">＋ Al</button>'+
+        '<button class="btn trade-btn" style="background:rgba(248,81,73,.15);color:var(--red);margin-top:0" data-trade="SAT" data-key="'+key+'">－ Sat</button>'+
+      '</div>'+
+      '<div class="grid2">'+
+        '<div class="kv"><div class="k">Ort. Maliyet (TL)</div><div class="v">'+fmtPriceTry(h.avgTry)+'</div></div>'+
+        (open?'<div class="kv"><div class="k">Maliyet (TL)</div><div class="v">'+fmtTry(h.qty*h.avgTry)+'</div></div>':'')+
+        (hasCp?'<div class="kv"><div class="k">Güncel Değer (TL)</div><div class="v">'+fmtTry(curVal)+'</div></div>':'')+
+        (hasCp?'<div class="kv"><div class="k">Anlık K/Z (TL)</div><div class="v '+cls(upl)+'">'+sign(upl)+fmtTry(upl)+' <span class="small">('+sign(uplPct)+fmt(uplPct,1)+'%)</span></div></div>':'')+
+      '</div>'+
+      (open?'<div style="margin-top:12px"><label style="margin:0 0 6px">Güncel Fiyat (TL) — anlık kâr/zarar için</label><input class="cptl-input" data-key="'+key+'" type="text" inputmode="decimal" value="'+(cp>0?fmt(cp,priceDec(cp)):"")+'" placeholder="örn. 20,60"></div>':'')+
+    '</div>';
+  }).join("");
+  document.getElementById("pf-list").innerHTML = cards || '<div class="empty small muted" style="padding:26px">Açık hisse pozisyonu yok.<br>Kapanan işlemler <b>Rapor</b>/<b>Tarihçe</b>\'de durur.</div>';
+
+  document.getElementById("faiz-set").onclick=()=>askFaiz(ym);
+  document.getElementById("faiz-hist").onclick=()=>askFaizOtherMonth();
+  document.getElementById("led-dep").onclick=()=>addLedgerEntry(1);
+  document.getElementById("led-wd").onclick=()=>addLedgerEntry(-1);
+  document.querySelectorAll(".ledger-del").forEach(b=>b.onclick=()=>{ if(confirm("Bu para hareketi silinsin mi?")){ saveLedger(loadLedger().filter(x=>String(x.id)!==b.dataset.id)); renderPortfoy(); toast("Silindi"); } });
+  document.querySelectorAll(".cptl-input").forEach(inp=>{ inp.onchange=()=>{ savePriceTl(inp.dataset.key, toNum(inp.value)); setTimeout(renderPortfoy,0); }; });
+  document.querySelectorAll("#pf-list .trade-btn").forEach(b=>{ b.onclick=()=>{ const p=b.dataset.key.split("|"); startTradeFor(p[0],p[1],b.dataset.trade); }; });
+
+  if(curR==null && !_faizAskedSession){ _faizAskedSession=true; setTimeout(()=>askFaiz(ym),300); }
+}
+function askFaiz(ym){
+  const r=loadIRates(); const cur=r[ym];
+  const s=prompt(monthName(ym)+" için AYLIK faiz oranı (% olarak, örn. 4 = aylık %4):", cur!=null? String(cur).replace(".",","):"");
+  if(s==null) return; const v=toNum(s);
+  if(isNaN(v)||v<0){ toast("Geçerli bir oran gir"); return; }
+  r[ym]=v; saveIRates(r); renderPortfoy(); toast(monthName(ym)+" faizi: %"+fmt(v,2));
+}
+function askFaizOtherMonth(){
+  const ym=prompt("Hangi ay? (YYYY-AA, örn. 2026-09):", ymStr(Date.now()));
+  if(ym==null) return;
+  if(!/^\d{4}-\d{2}$/.test(ym.trim())){ toast("Ay biçimi YYYY-AA olmalı"); return; }
+  askFaiz(ym.trim());
+}
+function addLedgerEntry(sgn){
+  const s=prompt(sgn>0? "Borsaya giren TL (yatırdığın para):" : "Borsadan çıkan TL:");
+  if(s==null) return; const amt=toNum(s);
+  if(!(amt>0)){ toast("Geçerli bir tutar gir"); return; }
+  const ds=prompt("Tarih (GG.AA.YYYY):", new Date().toLocaleDateString("tr-TR"));
+  if(ds==null) return;
+  const ts=parseTrDate(ds); if(isNaN(ts)){ toast("Tarih GG.AA.YYYY olmalı"); return; }
+  const led=loadLedger();
+  led.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,6), ts, date:new Date(ts).toISOString().slice(0,10), amount: sgn*amt});
+  saveLedger(led); renderPortfoy(); toast((sgn>0?"+":"−")+fmtTry(amt)+" eklendi");
+}
+function parseTrDate(s){
+  const m=String(s).trim().match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/);
+  if(!m) return NaN;
+  return new Date(+m[3], +m[2]-1, +m[1], 12, 0, 0).getTime();
+}
+
 function renderPortfoy(){
   chipBar("pf-chips", pfFilter, v=>{pfFilter=v; renderPortfoy();});
   const {holdings}=analyze(loadTx());
-  let hs = holdings.filter(h=> pfFilter==="hepsi"|| h.cat===pfFilter);
+  const rate = usableRate();
+  // Hisse (BIST) TL hesabı
+  const hCashTl=hisseCashTl(loadTx(), holdings);
+  const hHoldTl=hisseHoldingsTl(holdings);
+  const hTotalTl=hCashTl+hHoldTl;
+  const netDepTl=loadLedger().reduce((a,e)=>a+(+e.amount||0),0);
+  const benchTl=benchmarkTl(Date.now());
+  if(pfFilter==="hisse"){ renderHisseDash({holdings,rate,hCashTl,hHoldTl,hTotalTl,netDepTl,benchTl}); return; }
+
+  let hs = holdings.filter(h=> (pfFilter==="hepsi"|| h.cat===pfFilter) && h.cat!=="hisse");
   const list=document.getElementById("pf-list");
 
-  // Toplamlar
+  // Toplamlar (kripto/emtia)
   const prices=loadPrices();
   let openCostUsd=0, realUsd=0, realTry=0, feeUsd=0;
   let curValUsd=0, valuedCostUsd=0, haveAnyPrice=false;
@@ -583,27 +748,28 @@ function renderPortfoy(){
     }
     realUsd+=h.realUsd; realTry+=h.realTry; feeUsd+=h.feeUsd;
   });
+  if(pfFilter==="hepsi"){ holdings.filter(h=>h.cat==="hisse").forEach(h=>{ realUsd+=h.realUsd; realTry+=h.realTry; }); }
   const unrealUsd = curValUsd - valuedCostUsd;
   const unrealPct = valuedCostUsd>0? (unrealUsd/valuedCostUsd*100) : 0;
   const cash = cashUsdt();
   const tlCash = loadCashTl();
-  const rate = usableRate();
   const tlInUsd = rate>0? tlCash/rate : 0;
   const includeCash = (pfFilter==="hepsi");
+  const hisseUsd = (includeCash && rate>0)? hTotalTl/rate : 0; // hisse hesabını USD toplamına kat
   const cashPart = includeCash? (cash + tlInUsd) : 0;
-  const nakitSub = includeCash? (' · Nakit(USDT) '+fmtUsd(cash)+(tlCash!==0? ' · Nakit(TL) '+fmtTry(tlCash):'')) : '';
+  const nakitSub = includeCash? (' · Nakit(USDT) '+fmtUsd(cash)+(tlCash!==0? ' · Nakit(TL) '+fmtTry(tlCash):'')+(hisseUsd>0? ' · Hisse ≈ '+fmtUsd(hisseUsd):'')) : '';
 
   document.getElementById("pf-total").innerHTML =
     (haveAnyPrice
       ? '<div class="lbl">Toplam Değer (USD)</div>'+
-        '<div class="amt">'+fmtUsd(curValUsd + cashPart)+'</div>'+
+        '<div class="amt">'+fmtUsd(curValUsd + cashPart + hisseUsd)+'</div>'+
         '<div class="sub">Kripto '+fmtUsd(curValUsd)+nakitSub+'</div>'+
         '<div class="row" style="margin-top:12px">'+
           '<div><div class="lbl">Anlık K/Z (USD)</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealUsd)+fmtUsd(unrealUsd)+'</div></div>'+
           '<div style="text-align:right"><div class="lbl">Getiri</div><div class="big '+cls(unrealUsd)+'">'+sign(unrealPct)+fmt(unrealPct,1)+'%</div></div>'+
         '</div>'
       : '<div class="lbl">Toplam (maliyet + nakit)</div>'+
-        '<div class="amt">'+fmtUsd(openCostUsd + cashPart)+'</div>'+
+        '<div class="amt">'+fmtUsd(openCostUsd + cashPart + hisseUsd)+'</div>'+
         '<div class="sub">Maliyet '+fmtUsd(openCostUsd)+nakitSub+' · Fiyat çekince anlık K/Z görünür.</div>'
     )+
     ((realUsd!==0||realTry!==0)? '<div class="sub" style="margin-top:10px">Gerçekleşen K/Z: <span class="'+cls(realUsd)+'">'+sign(realUsd)+fmtUsd(realUsd)+'</span> · <span class="'+cls(realTry)+'">'+sign(realTry)+fmtTry(realTry)+'</span></div>':'')+
@@ -1088,10 +1254,9 @@ function saveForm(){
       else { saveCash(loadCash()+proceeds); cashNote=" · USDT kasaya +"+fmtUsd(proceeds); }
     }
   } else if(cat==="hisse"){
-    // BIST hisse TL ile (komisyonsuz): alış TL kasadan düşer, satış TL kasaya girer
-    const amtTl = (quote==="tl"? priceInput : price*rate) * qty;
-    if(formSide==="AL"){ saveCashTl(loadCashTl()-amtTl); cashNote=" · TL kasadan −"+fmtTry(amtTl); }
-    else { saveCashTl(loadCashTl()+amtTl); cashNote=" · TL kasaya +"+fmtTry(amtTl); }
+    // BIST hisse: nakit "Hisse Hesabı" içinde para girişleri + işlem akışından türetilir (ayrı TL kasa)
+    const amtTl=(quote==="tl"? priceInput : price*rate)*qty;
+    cashNote=(formSide==="AL"? " · Hisse nakdinden −"+fmtTry(amtTl) : " · Hisse nakdine +"+fmtTry(amtTl));
   }
   resetForm();
   renderAll();
@@ -1122,11 +1287,13 @@ function startAdd(){ resetForm(); switchView("ekle"); }
 function startTradeFor(cat, symbol, side){
   resetForm();
   document.getElementById("f-cat").value=cat;
+  if(cat==="hisse") document.getElementById("f-quote").value="tl";
   setSide(side);
   document.getElementById("f-symbol").value=symbol;
-  const cp=loadPrices()[cat+"|"+symbol];
+  // Hisse için güncel TL fiyatı, kripto için USD fiyatı ön-doldur
+  const cp = cat==="hisse"? (loadPricesTl()[cat+"|"+symbol]) : (loadPrices()[cat+"|"+symbol]);
   if(cp>0) document.getElementById("f-price").value=numIn(cp);
-  autoFillFee();
+  autoFillFee(); updatePriceLabel();
   document.getElementById("ekle-title").textContent=(side==="AL"?"Alış":"Satış")+" — "+symbol;
   switchView("ekle");
   setTimeout(()=>{ const q=document.getElementById("f-qty"); if(q) q.focus(); },60);
@@ -1184,7 +1351,8 @@ function openSettings(){
 /* ---- Yedekleme ---- */
 function exportData(){
   return JSON.stringify({app:"portfoy-takip", v:1, exportedAt:new Date().toISOString(),
-    tx:loadTx(), fees:loadFees(), prices:loadPrices(), cash:loadCash(), cashTl:loadCashTl()});
+    tx:loadTx(), fees:loadFees(), prices:loadPrices(), cash:loadCash(), cashTl:loadCashTl(),
+    hledger:loadLedger(), irates:loadIRates(), pricesTl:loadPricesTl()});
 }
 async function copyText(text){
   try{ await navigator.clipboard.writeText(text); return true; }catch(e){}
@@ -1229,6 +1397,21 @@ function importData(text, mode){
   }
   if(obj.cash!=null && !isNaN(parseFloat(obj.cash))) saveCash(parseFloat(obj.cash));
   if(obj.cashTl!=null && !isNaN(parseFloat(obj.cashTl))) saveCashTl(parseFloat(obj.cashTl));
+  // Hisse hesabı: para giriş defteri (id'ye göre birleştir), aylık faiz, güncel TL fiyatları
+  if(Array.isArray(obj.hledger)){
+    let curL = mode==="replace"? [] : loadLedger();
+    const lids=new Set(curL.map(e=>String(e.id)));
+    obj.hledger.forEach(e=>{ if(!lids.has(String(e.id))){ curL.push(e); lids.add(String(e.id)); } });
+    saveLedger(curL);
+  }
+  if(obj.irates && typeof obj.irates==="object"){
+    const curR = mode==="replace"? {} : loadIRates();
+    Object.assign(curR, obj.irates); saveIRates(curR);
+  }
+  if(obj.pricesTl && typeof obj.pricesTl==="object"){
+    const curPt = mode==="replace"? {} : loadPricesTl();
+    Object.assign(curPt, obj.pricesTl); localStorage.setItem(LS_PRICES_TL, JSON.stringify(curPt));
+  }
   return {count: mode==="replace"? cur.length : obj._added, total: cur.length};
 }
 function doImport(mode){
