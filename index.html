@@ -338,8 +338,8 @@
 
     <label style="margin-top:16px">İçe Aktar</label>
     <input id="b-file" type="file" accept=".json,application/json,text/plain" style="padding:10px">
-    <div class="hint" style="margin-bottom:8px">İndirdiğiniz yedek dosyasını seçin — metni aşağı otomatik gelir. Ya da metni elle yapıştırın.</div>
-    <textarea id="b-import" placeholder="Yedek metnini buraya yapıştırın (veya yukarıdan dosya seçin)…"></textarea>
+    <div class="hint" style="margin-bottom:8px">Buraya şunları yapıştırabilirsiniz: yedek metni, size verilen <b>kurulum linki</b> (işlem ekleme linki) veya yedek dosyası. Link yapıştırıp <b>Birleştir</b>'e basın.</div>
+    <textarea id="b-import" placeholder="Yedek metnini VEYA işlem ekleme linkini buraya yapıştırın…"></textarea>
     <div class="btnrow">
       <button class="btn" id="b-merge">Birleştir</button>
       <button class="btn ghost" id="b-replace">Üzerine Yaz</button>
@@ -1438,9 +1438,21 @@ function importData(text, mode){
   }
   return {count: mode==="replace"? cur.length : obj._added, total: cur.length};
 }
+// Yapıştırılan metni JSON'a çevir: düz JSON ise aynen; link (#d=.. / d=..) veya base64 ise çöz
+function decodeDataText(raw){
+  const t=String(raw||"").trim();
+  if(!t) return "";
+  if(t.charAt(0)==="{") return t;                 // zaten JSON
+  const m=t.match(/[#&?]d=([^&\s]+)/);            // link içinden d= parametresi
+  let b = m? m[1] : t;                            // link değilse metnin kendisi base64 kabul
+  try{ b=decodeURIComponent(b); }catch(e){}
+  b=b.replace(/-/g,"+").replace(/_/g,"/");
+  while(b.length%4) b+="=";
+  try{ return decodeURIComponent(escape(atob(b))); }catch(e){ return t; }
+}
 function doImport(mode){
-  const text=document.getElementById("b-import").value.trim();
-  if(!text){ toast("Önce yedek metnini yapıştırın"); return; }
+  const text=decodeDataText(document.getElementById("b-import").value);
+  if(!text){ toast("Önce yedek metnini / linki yapıştırın"); return; }
   if(mode==="replace" && !confirm("Mevcut tüm veriler silinip yedekle değiştirilecek. Emin misiniz?")) return;
   try{
     const r=importData(text, mode);
@@ -1520,6 +1532,8 @@ function importFromHash(){
 /* ============ Başlat ============ */
 seedIfNeeded();
 importFromHash();
+// Uygulama açıkken aynı linke dokunulursa (hash değişirse) yine içe aktar
+window.addEventListener("hashchange", importFromHash);
 initForm();
 renderAll();
 document.getElementById("pf-refresh").onclick=()=>fetchLivePrices(false);
